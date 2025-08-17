@@ -1,8 +1,18 @@
 import React, { useEffect, useState, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 
-// Backend API base (for Render/Vercel). Set VITE_API_BASE in hosting env.
-const API_BASE = (import.meta?.env?.VITE_API_BASE || "http://localhost:8000").replace(/\/$/, "");
+// Backend API base (for Render/Vercel). Prefer env; fallback to same-origin in non-localhost; else localhost.
+const API_BASE = (() => {
+  const env = import.meta?.env?.VITE_API_BASE;
+  if (env && String(env).trim()) return String(env).replace(/\/$/, "");
+  if (typeof window !== 'undefined') {
+    const { origin, hostname } = window.location || {};
+    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return String(origin).replace(/\/$/, "");
+    }
+  }
+  return "http://localhost:8000";
+})();
 const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
 
 // Tooltip for mini line chart that shows full year and selected timeframe
