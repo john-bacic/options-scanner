@@ -21,7 +21,7 @@ import csv
 import dataclasses
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import List, Optional, Dict, Any
 import random
 
@@ -650,19 +650,26 @@ async def get_history(
                 spot = YahooFinanceAdapter().get_current_price(u_sym)
             except Exception:
                 spot = 100.0
-            from datetime import datetime, timedelta
             pts = 30
             for i in range(pts):
                 dt = datetime.utcnow() - timedelta(days=(pts - 1 - i))
                 # simple gentle random walk
                 drift = (i - pts/2) * 0.001 * spot
                 val = max(0.01, spot * (1 + drift/spot))
-                data.append({"date": dt.isoformat(), "close": float(val)})
+                # Use RFC 3339 format without sub-second precision for Safari compatibility
+                dt_rfc3339 = dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                data.append({"date": dt_rfc3339, "close": float(val)})
             return {"symbol": u_sym, "period": used_period, "interval": used_interval, "data": data}
 
         for idx, row in hist.iterrows():
             try:
-                dt_iso = idx.to_pydatetime().isoformat()
+                dt_dt = idx.to_pydatetime()
+                # Normalize to UTC and emit RFC 3339 without sub-second precision for Safari
+                if dt_dt.tzinfo is None:
+                    dt_dt = dt_dt.replace(tzinfo=timezone.utc)
+                else:
+                    dt_dt = dt_dt.astimezone(timezone.utc)
+                dt_iso = dt_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
             except Exception:
                 dt_iso = str(idx)
             close_val = float(row.get("Close", row.get("close", 0.0)))
