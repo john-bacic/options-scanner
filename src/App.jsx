@@ -1,6 +1,10 @@
 import React, { useEffect, useState, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 
+// Backend API base (for Render/Vercel). Set VITE_API_BASE in hosting env.
+const API_BASE = (import.meta?.env?.VITE_API_BASE || "http://localhost:8000").replace(/\/$/, "");
+const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
+
 // Tooltip for mini line chart that shows full year and selected timeframe
 function MiniTooltip({ active, payload, label, range }) {
   if (!active || !payload || !payload.length) return null;
@@ -224,7 +228,7 @@ function App() {
       setPriceLoading(true);
       setPriceError(null);
       try {
-        const res = await fetch(`http://localhost:8000/price?symbol=${encodeURIComponent(symbol)}`);
+        const res = await fetch(apiUrl(`/price?symbol=${encodeURIComponent(symbol)}`));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data && typeof data.price === "number") {
@@ -265,8 +269,8 @@ function App() {
       setHistoryLoading(true);
       setHistoryError(null);
       try {
-        const url = `http://localhost:8000/history?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(historyPeriod)}&interval=${encodeURIComponent(historyInterval)}`;
-        const res = await fetch(url);
+        const url = `/history?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(historyPeriod)}&interval=${encodeURIComponent(historyInterval)}`;
+        const res = await fetch(apiUrl(url));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const rows = Array.isArray(data?.data) ? data.data : [];
@@ -333,10 +337,10 @@ function App() {
       if (Number.isFinite(otm) && otm >= 0 && otm <= 1) params.set("pop_otm_fallback", String(otm));
       if (Number.isFinite(itm) && itm >= 0 && itm <= 1) params.set("pop_itm_fallback", String(itm));
       
-      const url = `http://localhost:8000/scan?${params.toString()}`;
-      console.log("Fetching URL:", url);
+      const url = `/scan?${params.toString()}`;
+      console.log("Fetching URL:", apiUrl(url));
       
-      const response = await fetch(url);
+      const response = await fetch(apiUrl(url));
       console.log("Response status:", response.status);
       
       if (response.ok) {
