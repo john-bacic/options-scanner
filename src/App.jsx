@@ -547,12 +547,11 @@ function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={history} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                      {/* Override rightmost vertical grid line to white */}
-                      {history.length > 0 && (
-                        <ReferenceLine x={history[history.length - 1].dateFull} stroke="#ffffff" strokeDasharray="3 3" />
-                      )}
                       <XAxis
                         dataKey="dateFull"
+                        type="category"
+                        allowDuplicatedCategory={false}
+                        interval="preserveStartEnd"
                         tick={(props) => (
                           <CustomXAxisTick
                             {...props}
@@ -562,7 +561,6 @@ function App() {
                         )}
                         tickLine={false}
                         axisLine={{ stroke: '#ffffff' }}
-                        ticks={[...new Set([history[0]?.dateFull, history[history.length - 1]?.dateFull].filter(Boolean))]}
                         tickFormatter={(v) => formatDateMMDDYY(v)}
                       />
                       <YAxis tick={{ fontSize: 10 }} width={40} domain={["auto", "auto"]} axisLine={{ stroke: '#ffffff' }} tickLine={false} />
