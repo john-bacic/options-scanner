@@ -1,0 +1,25 @@
+# Node
+node_modules/
+.vite/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Mac
+.DS_Store
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vite/Tailwind caches
+*.local
+.next/
+.cache/
+
+# Build outputs
+frontend_build/
