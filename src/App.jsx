@@ -973,7 +973,7 @@ function App() {
 
       {/* Results */}
       <div className="-mx-8 md:mx-0 p-0 md:p-6 bg-transparent md:bg-white rounded-none md:rounded-lg shadow-none md:shadow">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 px-8 md:px-0">
           <h2 className="text-xl font-semibold">Results</h2>
           <button
             type="button"
