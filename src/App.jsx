@@ -191,9 +191,49 @@ function App() {
   const [dteMin, setDteMin] = useState(1);
   const [dteMax, setDteMax] = useState(45);
   const [minOI, setMinOI] = useState(100);
-  const [capital, setCapital] = useState(100000); // USD
-  const [targetIncome, setTargetIncome] = useState(10000); // USD per month
+  const [capital, setCapital] = useState(() => {
+    if (typeof window === 'undefined') return 100000;
+    try {
+      const raw = localStorage.getItem('options.capital');
+      if (raw === null) return 100000;
+      if (raw === '') return '';
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 100000;
+    } catch {
+      return 100000;
+    }
+  }); // USD for puts
+  const [shareCount, setShareCount] = useState(() => {
+    if (typeof window === 'undefined') return 100;
+    try {
+      const sym = (typeof symbol === 'string' && symbol) ? symbol.toUpperCase() : null;
+      let raw = sym ? localStorage.getItem(`options.shareCount.${sym}`) : null;
+      if (raw === null) {
+        // Back-compat: fall back to legacy global if present on initial load
+        raw = localStorage.getItem('options.shareCount');
+      }
+      if (raw === null) return 100;
+      if (raw === '') return '';
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 100;
+    } catch {
+      return 100;
+    }
+  }); // number of shares for covered calls (per symbol)
+  const [targetIncome, setTargetIncome] = useState(() => {
+    if (typeof window === 'undefined') return 10000;
+    try {
+      const raw = localStorage.getItem('options.targetIncome');
+      if (raw === null) return 10000;
+      if (raw === '') return '';
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 10000;
+    } catch {
+      return 10000;
+    }
+  }); // USD per month
   const [results, setResults] = useState([]);
+  const [strikeLimit, setStrikeLimit] = useState('12'); // how many rows to display: '6' | '12' | '24' | 'all'
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [loading, setLoading] = useState(false);
   const [price, setPrice] = useState(null);
@@ -219,10 +259,15 @@ function App() {
   const [useBid, setUseBid] = useState(false);
   const [popOtmFallback, setPopOtmFallback] = useState(0.70);
   const [popItmFallback, setPopItmFallback] = useState(0.30);
+  // Delta filters for covered calls
+  const [deltaMin, setDeltaMin] = useState(0.15);
+  const [deltaMax, setDeltaMax] = useState(0.30);
   // Section accordions
   const [isCapitalOpen, setIsCapitalOpen] = useState(true);
   const [isSymbolOpen, setIsSymbolOpen] = useState(true);
   const [isParamsOpen, setIsParamsOpen] = useState(true);
+  // Strategy selection
+  const [strategy, setStrategy] = useState("puts"); // "puts" | "calls"
 
   // Helpers moved to module scope
 
@@ -253,6 +298,25 @@ function App() {
   const isRangeActive = (key) => {
     const cfg = chartRanges[key];
     return cfg && historyPeriod === cfg.period && historyInterval === cfg.interval;
+  };
+
+  // Expiry presets for quick DTE filter (for results table)
+  const dtePresets = {
+    '0-7d':   { min: 0,  max: 7 },
+    '8-14d':  { min: 8,  max: 14 },
+    '15-30d': { min: 15, max: 30 },
+    '30-45d': { min: 30, max: 45 },
+    '45-60d': { min: 45, max: 60 },
+  };
+  const applyDtePreset = (key) => {
+    const p = dtePresets[key];
+    if (!p) return;
+    setDteMin(p.min);
+    setDteMax(p.max);
+  };
+  const isDtePresetActive = (key) => {
+    const p = dtePresets[key];
+    return !!p && Number(dteMin) === p.min && Number(dteMax) === p.max;
   };
 
   // Fetch current price when symbol changes
@@ -361,21 +425,44 @@ function App() {
       params.set("use_bid", String(Boolean(useBid)));
 
       // Include optional numerics only if positive and finite to avoid 422s
-      const capNum = Number(capital);
-      if (Number.isFinite(capNum) && capNum > 0) {
-        params.set("capital", String(capNum));
+      let capForBackend = Number(capital);
+      if (strategy === "calls") {
+        const shares = Number(shareCount);
+        const px = Number(price);
+        if (Number.isFinite(px) && Number.isFinite(shares) && shares > 0) {
+          capForBackend = shares * px;
+        } else {
+          capForBackend = NaN;
+        }
+      }
+      if (Number.isFinite(capForBackend) && capForBackend > 0) {
+        params.set("capital", String(capForBackend));
       }
       const tgtNum = Number(targetIncome);
       if (Number.isFinite(tgtNum) && tgtNum > 0) {
         params.set("target_income", String(tgtNum));
       }
-      // POP fallbacks (0..1). Only include if valid numbers
-      const otm = Number(popOtmFallback);
-      const itm = Number(popItmFallback);
-      if (Number.isFinite(otm) && otm >= 0 && otm <= 1) params.set("pop_otm_fallback", String(otm));
-      if (Number.isFinite(itm) && itm >= 0 && itm <= 1) params.set("pop_itm_fallback", String(itm));
-      
-      const url = `/scan?${params.toString()}`;
+      // Backend tuning for POP fallbacks
+      params.set("pop_otm_fallback", String(popOtmFallback));
+      params.set("pop_itm_fallback", String(popItmFallback));
+      // Covered calls: explicitly request OTM-only by default (backend also defaults true)
+      if (strategy === "calls") {
+        params.set("otm_only", "true");
+        // Delta filters
+        let dMin = (deltaMin === "" || !Number.isFinite(Number(deltaMin))) ? 0.15 : Number(deltaMin);
+        let dMax = (deltaMax === "" || !Number.isFinite(Number(deltaMax))) ? 0.30 : Number(deltaMax);
+        dMin = Math.max(0, Math.min(1, dMin));
+        dMax = Math.max(0, Math.min(1, dMax));
+        if (dMin > dMax) {
+          const tmp = dMin; dMin = dMax; dMax = tmp;
+        }
+        params.set("delta_min", String(dMin));
+        params.set("delta_max", String(dMax));
+      }
+
+      // Use different endpoints based on strategy
+      const endpoint = strategy === "calls" ? "/scan-calls" : "/scan";
+      const url = `${endpoint}?${params.toString()}`;
       console.log("Fetching URL:", apiUrl(url));
       
       const response = await fetch(apiUrl(url));
@@ -398,7 +485,7 @@ function App() {
     }
   };
 
-  // Auto-refresh scan when Capital or Target Income change
+  // Auto-refresh scan when Capital/Shares, DTE, or Target Income change
   useEffect(() => {
     if (!symbol) return;
     // Debounce to avoid spamming the backend while typing
@@ -409,7 +496,7 @@ function App() {
     setAutoScanTimer(t);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capital, targetIncome, useBid, popOtmFallback, popItmFallback]);
+  }, [capital, shareCount, dteMin, dteMax, targetIncome, useBid, popOtmFallback, popItmFallback, deltaMin, deltaMax]);
 
   // Auto-run scan when symbol changes (debounced)
   useEffect(() => {
@@ -423,17 +510,124 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
-  // Find the row whose strike is closest to the current underlying price
-  const closestStrikeIndex = (price != null && Array.isArray(results) && results.length > 0)
-    ? results.reduce((bestI, r, i) => {
+  // Auto-run scan when strategy changes so table updates between Puts and Calls
+  useEffect(() => {
+    if (!symbol) return;
+    if (autoScanTimer) clearTimeout(autoScanTimer);
+    const t = setTimeout(() => {
+      handleScan();
+    }, 300);
+    setAutoScanTimer(t);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy]);
+
+  // When symbol changes, load Number of Shares for that symbol; default to 100 if none saved
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const sym = (typeof symbol === 'string' && symbol) ? symbol.toUpperCase() : null;
+      const key = sym ? `options.shareCount.${sym}` : null;
+      const raw = key ? localStorage.getItem(key) : null;
+      if (raw === null || raw === '') {
+        setShareCount(100);
+      } else {
+        const n = Number(raw);
+        setShareCount(Number.isFinite(n) ? n : 100);
+      }
+    } catch {
+      setShareCount(100);
+    }
+  }, [symbol]);
+
+  // Persist key user inputs across refresh
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('options.capital', capital === '' ? '' : String(capital)); } catch {}
+  }, [capital]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const val = shareCount === '' ? '' : String(shareCount);
+      const sym = (typeof symbol === 'string' && symbol) ? symbol.toUpperCase() : null;
+      if (sym) localStorage.setItem(`options.shareCount.${sym}`, val);
+      // Keep legacy global key for backward compatibility
+      localStorage.setItem('options.shareCount', val);
+    } catch {}
+  }, [shareCount]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('options.targetIncome', targetIncome === '' ? '' : String(targetIncome)); } catch {}
+  }, [targetIncome]);
+
+  // Auto-run scan when price loads/changes in Calls to apply shares * price capital
+  useEffect(() => {
+    if (!symbol) return;
+    if (strategy !== "calls") return;
+    if (!Number.isFinite(Number(price))) return;
+    if (autoScanTimer) clearTimeout(autoScanTimer);
+    const t = setTimeout(() => {
+      handleScan();
+    }, 300);
+    setAutoScanTimer(t);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [price]);
+
+  // Find the row whose strike is closest to the current underlying price (computed later on displayResults)
+
+  // Apply delta filter on client for calls to adjust displayed strikes to current delta settings (backend also filters)
+  const resultsForDisplay = strategy === "calls"
+    ? results.filter((r) => {
+        const d = Number(r?.delta_abs);
+        // If delta couldn't be computed on backend, keep the row (mimic backend behavior)
+        if (!Number.isFinite(d)) return true;
+        let dMin = Number(deltaMin);
+        let dMax = Number(deltaMax);
+        if (!Number.isFinite(dMin)) dMin = 0;
+        if (!Number.isFinite(dMax)) dMax = 1;
+        dMin = Math.max(0, Math.min(1, dMin));
+        dMax = Math.max(0, Math.min(1, dMax));
+        if (dMin > dMax) { const t = dMin; dMin = dMax; dMax = t; }
+        return d >= dMin && d <= dMax;
+      })
+    : results;
+
+  // Limit how many results (strikes) are shown in the table
+  const displayResults = strikeLimit === 'all'
+    ? resultsForDisplay
+    : resultsForDisplay.slice(0, Math.max(0, Number(strikeLimit) || 0));
+
+  // Compute closest-to-spot row within the currently displayed results
+  const closestDisplayIndex = (price != null && Array.isArray(displayResults) && displayResults.length > 0)
+    ? displayResults.reduce((bestI, r, i) => {
         const s = Number(r?.strike);
         if (!Number.isFinite(s)) return bestI;
-        const bestS = Number(results[bestI]?.strike);
+        const bestS = Number(displayResults[bestI]?.strike);
         const d = Math.abs(s - Number(price));
         const bestD = Math.abs((Number.isFinite(bestS) ? bestS : Infinity) - Number(price));
         return d < bestD ? i : bestI;
       }, 0)
     : -1;
+
+  // If visible strikes are reduced and previously selected row is now hidden, clear selection
+  useEffect(() => {
+    if (selectedIndex == null) return;
+    if (strikeLimit === 'all') return;
+    const limit = Number(strikeLimit) || 0;
+    if (selectedIndex >= limit) {
+      setSelectedIndex(null);
+    }
+  }, [strikeLimit, selectedIndex]);
+
+  // If delta filter changes hide the selected row, clear selection to avoid mismatched indices
+  useEffect(() => {
+    if (selectedIndex == null) return;
+    if (!Array.isArray(displayResults)) return;
+    if (selectedIndex >= displayResults.length) {
+      setSelectedIndex(null);
+    }
+  }, [displayResults.length, selectedIndex]);
 
   return (
     <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-2 md:px-8 pb-8`}>
@@ -447,11 +641,11 @@ function App() {
           </div>
         </div>
       )}
-      <div className="flex items-center justify-between mb-2">
-        <h1 className="text-2xl md:text-3xl font-bold text-blue-600">Cash-Secured Put Scanner</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl md:text-3xl font-bold text-blue-600">Options Strategy Scanner</h1>
         <button
           type="button"
-          aria-label="About cash-secured puts"
+          aria-label="About options strategies"
           className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
           onClick={() => setAboutInfoOpen(true)}
        >
@@ -459,6 +653,34 @@ function App() {
             <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
           </svg>
         </button>
+      </div>
+      
+      {/* Strategy Tabs */}
+      <div className="mb-6">
+        <div className="border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            <button
+              onClick={() => setStrategy("puts")}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                strategy === "puts"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              Cash-Secured Puts
+            </button>
+            <button
+              onClick={() => setStrategy("calls")}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                strategy === "calls"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              Covered Calls
+            </button>
+          </nav>
+        </div>
       </div>
       
       {/* Capital & Target (moved to top row) */}
@@ -482,27 +704,65 @@ function App() {
             >
               <path d="M9 5l7 7-7 7" />
             </svg>
-            <h2 className="text-xl font-semibold">Capital & Target Monthly Income</h2>
+            <h2 className="text-xl font-semibold">
+              {strategy === "calls" ? "Shares & Target Monthly Income" : "Capital & Target Monthly Income"}
+            </h2>
           </button>
         </div>
         {isCapitalOpen && (
-        <div id="capital-section" className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+        <div id="capital-section" className={"grid grid-cols-1 " + (strategy === "calls" ? "md:grid-cols-3 " : "md:grid-cols-2 ") + "gap-4 items-end"}>
           <div className="flex flex-col h-full justify-end">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">Capital</span></span>
+              <span className="inline-flex items-center gap-2 max-w-full">
+                <span className="truncate min-w-0">
+                  {strategy === "calls" ? "Number of Shares" : "Capital"}
+                </span>
+              </span>
             </label>
             <div className="relative">
-              <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">$</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={formatMoney(capital)}
-                onChange={(e) => setCapital(parseMoney(e.target.value))}
-                className="w-full pr-12 pl-7 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">USD</span>
+              {strategy === "calls" ? (
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={formatInteger(shareCount)}
+                  onChange={(e) => setShareCount(parseInteger(e.target.value))}
+                  placeholder="e.g., 100"
+                  className="w-full pr-3 pl-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              ) : (
+                <>
+                  <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={formatMoney(capital)}
+                    onChange={(e) => setCapital(parseMoney(e.target.value))}
+                    className="w-full pr-12 pl-7 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">USD</span>
+                </>
+              )}
             </div>
           </div>
+          {strategy === "calls" && (
+            <div className="flex flex-col h-full justify-end">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">Value of Shares</span></span>
+              </label>
+              <div className="relative">
+                <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">$</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={price != null && shareCount !== "" && Number.isFinite(Number(shareCount)) ? formatMoney(Number(shareCount) * Number(price)) : ""}
+                  readOnly
+                  disabled
+                  className="w-full pr-12 pl-7 py-2 border border-gray-200 bg-gray-50 rounded-md focus:outline-none"
+                />
+                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">USD</span>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col h-full justify-end">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">Target Monthly Income</span></span>
@@ -852,7 +1112,7 @@ function App() {
             disabled={loading}
             className="w-auto lg:min-w-[140px] px-3 md:px-4 py-2 bg-blue-600 text-white rounded-md text-sm md:text-base hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap -mt-0.5 md:-mt-1"
           >
-            {loading ? "Scanning..." : "Scan Options"}
+            {loading ? "Scanning..." : (strategy === "calls" ? "Scan Calls" : "Scan Puts")}
           </button>
         </div>
         {isParamsOpen && (
@@ -908,6 +1168,44 @@ function App() {
           </div>
           {/* Force desktop line break so toggles start on a new row */}
           <div className="hidden lg:block col-span-1 lg:col-span-7 xl:col-span-8" aria-hidden="true" />
+          {strategy === "calls" && (
+            <>
+              <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <span className="inline-flex items-center gap-2 max-w-full">
+                    <span className="truncate min-w-0">Delta Min</span>
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={deltaMin}
+                  onChange={(e) => setDeltaMin(Number(e.target.value))}
+                  className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
+                />
+                <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.15)</div>
+              </div>
+              <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <span className="inline-flex items-center gap-2 max-w-full">
+                    <span className="truncate min-w-0">Delta Max</span>
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={deltaMax}
+                  onChange={(e) => setDeltaMax(Number(e.target.value))}
+                  className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
+                />
+                <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.30)</div>
+              </div>
+            </>
+          )}
           {/* Conservative premium toggle */}
           <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-2 xl:col-span-2 min-w-0">
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1028,6 +1326,29 @@ function App() {
                 <div className="text-xs text-gray-600">
                   <span className="font-semibold">Columns:</span> STRIKE · EXPIRY · BID · ASK · OI · $/CONTRACT · CONTRACTS · CAPITAL USED · INCOME/CONTRACT · INCOME TOTAL · POP
                 </div>
+                <div className="text-xs text-gray-600">
+                  <span className="font-semibold">Scan Parameters:</span> Filters and options that shape the results.
+                </div>
+                <div>
+                  <div className="font-semibold">Delta Min (Calls)</div>
+                  <p>Minimum absolute delta for covered calls to include. Range 0–1 (e.g., 0.15). Lower delta = further OTM.</p>
+                </div>
+                <div>
+                  <div className="font-semibold">Delta Max (Calls)</div>
+                  <p>Maximum absolute delta for covered calls to include. Range 0–1 (e.g., 0.30).</p>
+                </div>
+                <div>
+                  <div className="font-semibold">Use Bid (Conservative)</div>
+                  <p>When enabled, uses Bid instead of Mid to compute premium and income. Produces more conservative estimates.</p>
+                </div>
+                <div>
+                  <div className="font-semibold">POP OTM Fallback</div>
+                  <p>Fallback Probability of Profit used when the option is OTM and IV is unavailable. Range 0–1 (default 0.70).</p>
+                </div>
+                <div>
+                  <div className="font-semibold">POP ITM Fallback</div>
+                  <p>Fallback Probability of Profit used when the option is ITM and IV is unavailable. Range 0–1 (default 0.30).</p>
+                </div>
                 <div>
                   <div className="font-semibold">Strike</div>
                   <p>The option strike price. For cash-secured puts this is the price at which you may be obligated to buy 100 shares per contract if assigned.</p>
@@ -1087,25 +1408,62 @@ function App() {
 
       {/* Results */}
       <div className="-mx-8 md:mx-0 p-0 md:p-6 bg-transparent md:bg-white rounded-none md:rounded-lg shadow-none md:shadow">
-        <div className="flex items-center justify-between mb-4 px-[60px] md:px-0">
-          <h2 className="text-xl font-semibold">Results</h2>
-          <button
-            type="button"
-            aria-label="Results info"
-            className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
-            onClick={() => setResultsInfoOpen(true)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-              <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
-            </svg>
-          </button>
+        <div className="flex flex-col gap-2 md:gap-3 mb-4 px-[60px] md:px-0">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">Results — {strategy === "calls" ? "Call" : "Put"}</h2>
+            <button
+              type="button"
+              aria-label="Results info"
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
+              onClick={() => setResultsInfoOpen(true)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
+              </svg>
+            </button>
+          </div>
+          {/* DTE Preset Toggle */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-gray-600 mr-1">Expiry:</span>
+            {Object.keys(dtePresets).map((k) => (
+              <button
+                key={`dte-${k}`}
+                type="button"
+                onClick={() => applyDtePreset(k)}
+                className={`px-2 py-1 rounded border text-xs ${isDtePresetActive(k) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                aria-pressed={isDtePresetActive(k)}
+                title={`Show expiries ${dtePresets[k].min}–${dtePresets[k].max} days`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+          {/* Strikes Display Count Toggle */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-gray-600 mr-1">Strikes:</span>
+            {['6','12','24','all'].map((k) => {
+              const active = String(strikeLimit) === String(k);
+              return (
+                <button
+                  key={`strikes-${k}`}
+                  type="button"
+                  onClick={() => setStrikeLimit(k)}
+                  className={`px-2 py-1 rounded border text-xs ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  aria-pressed={active}
+                  title={`Show ${k === 'all' ? 'all' : k} strikes`}
+                >
+                  {k.toUpperCase()}
+                </button>
+              );
+            })}
+          </div>
         </div>
         {/* Summary */}
         <div className="px-16 md:px-0">
           <ErrorBoundary name="SummaryBar">
-            <SummaryBar results={results} targetIncome={targetIncome} selected={
-              selectedIndex != null && selectedIndex >= 0 && selectedIndex < results.length
-                ? results[selectedIndex]
+            <SummaryBar results={displayResults} targetIncome={targetIncome} selected={
+              selectedIndex != null && selectedIndex >= 0 && Array.isArray(displayResults) && selectedIndex < displayResults.length
+                ? displayResults[selectedIndex]
                 : null
             } />
           </ErrorBoundary>
@@ -1115,7 +1473,7 @@ function App() {
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             <p className="mt-2 text-gray-600">Scanning for options...</p>
           </div>
-        ) : results.length > 0 ? (
+        ) : displayResults.length > 0 ? (
           <div className="-mx-1 md:mx-0">
             <div className="overflow-x-auto pl-8 pr-8 md:px-0">
               <table className="min-w-full table-auto border-collapse">
@@ -1136,14 +1494,19 @@ function App() {
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Open Interest">
                       <span className="hidden md:inline">OI</span><span className="md:hidden">OI</span>
                     </th>
+                    {strategy === "calls" && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Delta (abs)">
+                        <span className="hidden md:inline">Delta</span><span className="md:hidden">DELTA</span>
+                      </th>
+                    )}
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Dollars Per Contract">
                       <span className="hidden md:inline">$/Contract</span><span className="md:hidden">$/CONTRACT</span>
                     </th>
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Contracts">
                       <span className="hidden md:inline">Contracts</span><span className="md:hidden">CONTRACTS</span>
                     </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Capital Used">
-                      <span className="hidden md:inline">Capital Used</span><span className="md:hidden">CAPITAL USED</span>
+                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title={strategy === "calls" ? "Share Value" : "Capital Used"}>
+                      <span className="hidden md:inline">{strategy === "calls" ? "Share Value" : "Capital Used"}</span><span className="md:hidden">{strategy === "calls" ? "SHARE VALUE" : "CAPITAL USED"}</span>
                     </th>
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Per Contract">
                       <span className="hidden md:inline">Income/Contract</span><span className="md:hidden">INCOME/CONTRACT</span>
@@ -1151,7 +1514,7 @@ function App() {
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Total">
                       <span className="hidden md:inline">Income Total</span><span className="md:hidden">INCOME TOTAL</span>
                     </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Probability of Profit">
+                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title={strategy === "calls" ? "Probability of Keeping Premium" : "Probability of Profit"}>
                       <span className="hidden md:inline">POP</span><span className="md:hidden">POP</span>
                     </th>
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Score">
@@ -1160,9 +1523,14 @@ function App() {
                   </tr>
                 </thead>
                 <tbody className="bg-white">
-                  {results.map((put, i) => {
-                    const isClosest = i === closestStrikeIndex;
-                    const isITM = price != null && Number.isFinite(Number(put?.strike)) && Number(put.strike) > Number(price);
+                  {displayResults.map((put, i) => {
+                    const isClosest = i === closestDisplayIndex;
+                    let isITM = false;
+                    if (price != null && Number.isFinite(Number(put?.strike))) {
+                      const strikeNum = Number(put.strike);
+                      const priceNum = Number(price);
+                      isITM = strategy === "calls" ? (strikeNum < priceNum) : (strikeNum > priceNum);
+                    }
                     const tdBase = `px-2 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-500 group-hover:text-blue-700 border-b border-gray-200`;
                     const tdBaseSelected = `px-2 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-500 group-hover:text-blue-700 border-y-2 border-blue-400`;
                     const tdBaseNoBottom = `px-2 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-500 group-hover:text-blue-700`;
@@ -1184,6 +1552,9 @@ function App() {
                                 <td className={baseClass}>{formatCurrency(put.bid)}</td>
                                 <td className={baseClass}>{formatCurrency(put.ask)}</td>
                                 <td className={baseClass}>{formatNumber(put.open_interest)}</td>
+                                {strategy === "calls" && (
+                                  <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
+                                )}
                                 <td className={baseClass}>{formatCurrency(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
                                 <td className={baseClass}>{formatNumber(put.contracts ?? 0)}</td>
                                 <td className={baseClass}>{formatCurrency(put.capital_used ?? 0, 0)}</td>
@@ -1197,7 +1568,7 @@ function App() {
                         </tr>
                         {isClosest && (
                           <tr aria-hidden="true">
-                            <td colSpan={12} className="p-0 border-b-2 border-green-600"></td>
+                            <td colSpan={strategy === "calls" ? 13 : 12} className="p-0 border-b-2 border-green-600"></td>
                           </tr>
                         )}
                       </React.Fragment>
@@ -1209,7 +1580,11 @@ function App() {
           </div>
         ) : (
           <div className="text-center py-8 text-gray-500">
-            <p>Click "Scan Options" to see results here.</p>
+            <p>
+              {results.length > 0
+                ? "No results match your current delta range. Try widening Delta Min/Max."
+                : `Click "${strategy === "calls" ? "Scan Calls" : "Scan Puts"}" to see results here.`}
+            </p>
             <p className="text-sm mt-1">Try adjusting your parameters to find more options.</p>
           </div>
         )}
@@ -1231,7 +1606,7 @@ function SummaryBar({ results, targetIncome, selected }) {
   const rowIncome = Number(useRow?.income_total ?? 0) || 0;
   const rowCapital = Number(useRow?.capital_used ?? 0) || 0;
   const rowContracts = Number(useRow?.contracts ?? 0) || 0;
-  const pct = target > 0 ? Math.min(100, (rowIncome / target) * 100) : null;
+  const pct = target > 0 ? (rowIncome / target) * 100 : null;
 
   return (
     <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded">

@@ -249,6 +249,153 @@ def rank_puts(
     ranked.sort(key=lambda x: x.score, reverse=True)
     return ranked
 
+def compute_covered_call_metrics(
+    quote: OptionQuote,
+    current_price: float,
+    days_to_expiry: int,
+    use_bid: bool = False,
+    pop_otm_fallback: float = 0.6,
+    pop_itm_fallback: float = 0.4,
+) -> Dict[str, float]:
+    """Compute key metrics for a covered call position."""
+    premium = quote.bid if use_bid else quote.mid
+    strike = quote.strike
+    
+    # For covered calls, we collect premium and potentially get called away
+    # Return calculation is based on premium received relative to share value
+    share_value = current_price * 100  # 100 shares per contract
+    aroc = (premium * 100 / share_value) * (365 / days_to_expiry) if days_to_expiry > 0 and share_value > 0 else 0
+    
+    # Monthly yield percentage
+    monthly_yield_pct = (premium * 100 / share_value) * (30 / days_to_expiry) if days_to_expiry > 0 and share_value > 0 else 0
+    
+    # For covered calls, POP is probability that stock stays below strike (we keep premium)
+    pop = None
+    try:
+        if days_to_expiry > 0:
+            T = max(1e-6, days_to_expiry / 365.0)
+            sigma = quote.iv if getattr(quote, "iv", None) is not None else None
+            if sigma and sigma > 0:
+                import math
+                z = (math.log(strike / max(1e-9, current_price)) - 0.5 * (sigma ** 2) * T) / (sigma * math.sqrt(T))
+                def phi(x: float) -> float:
+                    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+                pop = phi(z)  # P(S_T < strike)
+    except Exception:
+        pop = None
+    
+    if pop is None:
+        # For calls: if strike > current_price (OTM), higher chance of keeping premium
+        pop = (pop_otm_fallback if strike > current_price else pop_itm_fallback)
+    
+    # Breakeven is current price minus premium received
+    breakeven = current_price - premium
+    
+    # Max loss is if stock goes to zero (minus premium received)
+    max_loss = current_price - premium
+    
+    # Risk/reward: premium vs potential loss
+    risk_reward = premium / max_loss if max_loss > 0 else 0
+    
+    # Scoring for covered calls
+    score = (aroc * 100) + (pop * 20) + (risk_reward * 10) + (1 / (1 + quote.spread_pct))
+    
+    return {
+        "aroc": aroc,
+        "monthly_income": monthly_yield_pct,
+        "monthly_yield_pct": monthly_yield_pct,
+        "pop": pop,
+        "breakeven": breakeven,
+        "max_loss": max_loss,
+        "risk_reward": risk_reward,
+        "score": score
+    }
+
+def rank_covered_calls(
+    quotes: List[OptionQuote],
+    current_price: float,
+    dte_min: int,
+    dte_max: int,
+    delta_min: float,
+    delta_max: float,
+    min_oi: int,
+    max_spread_pct: float,
+    capital: Optional[float] = None,
+    use_bid: bool = False,
+    pop_otm_fallback: float = 0.6,
+    pop_itm_fallback: float = 0.4,
+    otm_only: bool = True,
+) -> List[RankedPut]:  # Reusing RankedPut structure for calls
+    """Rank call options for covered call strategy."""
+    ranked = []
+    
+    for quote in quotes:
+        # Calculate days to expiry
+        days_to_expiry = (quote.expiration - date.today()).days
+        
+        # Filter by criteria
+        if not (dte_min <= days_to_expiry <= dte_max):
+            continue
+        if quote.open_interest < min_oi:
+            continue
+        if quote.spread_pct > max_spread_pct:
+            continue
+        # Prefer OTM covered calls by default: require strike above current price
+        if otm_only and quote.strike <= current_price:
+            continue
+        
+        # Compute call delta for filtering
+        try:
+            T = max(1e-6, days_to_expiry / 365.0)
+            sigma = quote.iv if (getattr(quote, "iv", None) is not None and quote.iv and quote.iv > 0) else 0.30
+            import math
+            d1 = (math.log(max(1e-9, current_price / quote.strike)) + 0.5 * sigma * sigma * T) / (sigma * math.sqrt(T))
+            def phi(x: float) -> float:
+                return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+            call_delta = phi(d1)
+            abs_call_delta = abs(call_delta)
+        except Exception:
+            abs_call_delta = None
+
+        # Apply delta filter
+        if abs_call_delta is not None and not (delta_min <= abs_call_delta <= delta_max):
+            continue
+
+        # Compute covered call metrics
+        metrics = compute_covered_call_metrics(
+            quote,
+            current_price,
+            days_to_expiry,
+            use_bid=use_bid,
+            pop_otm_fallback=pop_otm_fallback,
+            pop_itm_fallback=pop_itm_fallback,
+        )
+        
+        # Create ranked call (reusing RankedPut structure)
+        ranked_call = RankedPut(
+            symbol=quote.symbol,
+            expiration=quote.expiration,
+            strike=quote.strike,
+            bid=quote.bid,
+            ask=quote.ask,
+            mid=quote.mid,
+            volume=quote.volume,
+            open_interest=quote.open_interest,
+            days_to_expiry=days_to_expiry,
+            aroc=metrics["aroc"],
+            pop=metrics["pop"],
+            breakeven=metrics["breakeven"],
+            monthly_income=metrics["monthly_income"],
+            max_loss=metrics["max_loss"],
+            risk_reward=metrics["risk_reward"],
+            score=metrics["score"]
+        )
+        ranked.append(ranked_call)
+    
+    # Sort by score (descending)
+    ranked.sort(key=lambda x: x.score, reverse=True)
+    return ranked
+
 # ============
 # Data Adapter
 # ============
@@ -422,8 +569,8 @@ class YahooFinanceAdapter:
                         )
                         quotes.append(quote)
                         
-                        # Limit to reasonable number of options per expiry
-                        if len(quotes) >= 50:
+                        # Limit to a higher number of options overall to include wider strikes
+                        if len(quotes) >= 200:
                             break
                             
                 except Exception as e:
@@ -450,7 +597,8 @@ class YahooFinanceAdapter:
         for days_offset in [30, 34, 38, 42]:
             expiration = base_date + timedelta(days=days_offset)
             
-            for strike_offset in [-20, -10, 0, 10, 20]:
+            # Widen strike range around current price to include more strikes
+            for strike_offset in [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60]:
                 strike = current_price + strike_offset
                 if strike <= 0:
                     continue
@@ -459,6 +607,144 @@ class YahooFinanceAdapter:
                 spread = mid * 0.1
                 bid = max(0.01, mid - spread)
                 ask = mid + mid
+                
+                volume = random.randint(100, 2000)
+                open_interest = random.randint(500, 5000)
+                
+                quote = OptionQuote(
+                    symbol=symbol.upper(),
+                    expiration=expiration,
+                    strike=strike,
+                    bid=bid,
+                    ask=ask,
+                    last=mid,
+                    volume=volume,
+                    open_interest=open_interest,
+                    iv=0.3
+                )
+                quotes.append(quote)
+        
+        return quotes
+    
+    def get_call_options(self, symbol: str) -> List[OptionQuote]:
+        """Get real call options from Yahoo Finance."""
+        try:
+            ticker = yf.Ticker(symbol.upper())
+            options = ticker.options
+            
+            if not options:
+                print(f"No options found for {symbol}")
+                return self._get_fallback_call_options(symbol)
+            
+            # Get the next few expiration dates
+            valid_expiries = []
+            current_date = date.today()
+            
+            for exp_date_str in options:
+                exp_date = datetime.strptime(exp_date_str, '%Y-%m-%d').date()
+                if exp_date > current_date:
+                    valid_expiries.append(exp_date)
+                    if len(valid_expiries) >= 4:  # Limit to 4 expiries
+                        break
+            
+            if not valid_expiries:
+                return self._get_fallback_call_options(symbol)
+            
+            quotes = []
+            current_price = self.get_current_price(symbol)
+            
+            for expiration in valid_expiries:
+                try:
+                    # Get options chain for this expiry
+                    opt_chain = ticker.option_chain(expiration.strftime('%Y-%m-%d'))
+                    calls = opt_chain.calls
+                    
+                    if calls.empty:
+                        continue
+                    
+                    # Filter calls with reasonable strikes and liquidity
+                    for _, call in calls.iterrows():
+                        strike = call['strike']
+                        bid = call['bid']
+                        ask = call['ask']
+                        volume = call['volume']
+                        open_interest = call['openInterest']
+                        iv = None
+                        try:
+                            iv_val = call.get('impliedVolatility') if hasattr(call, 'get') else call['impliedVolatility']
+                            if iv_val is not None and iv_val > 0:
+                                iv = float(iv_val)
+                        except Exception:
+                            iv = None
+                        
+                        # Skip if no bid/ask or very low liquidity
+                        if bid <= 0 or ask <= 0 or open_interest < 100:
+                            continue
+                        
+                        # Calculate mid price and spread percentage
+                        mid = (bid + ask) / 2
+                        spread_pct = (ask - bid) / mid if mid > 0 else 1.0
+                        
+                        # Skip if spread is too wide (>50%)
+                        if spread_pct > 0.5:
+                            continue
+                        
+                        quote = OptionQuote(
+                            symbol=symbol.upper(),
+                            expiration=expiration,
+                            strike=strike,
+                            bid=bid,
+                            ask=ask,
+                            last=mid,
+                            volume=volume,
+                            open_interest=open_interest,
+                            iv=iv
+                        )
+                        quotes.append(quote)
+                        
+                        # Limit to a higher number of options overall to include wider strikes
+                        if len(quotes) >= 200:
+                            break
+                            
+                except Exception as e:
+                    print(f"Error getting call options for {symbol} {expiration}: {e}")
+                    continue
+            
+            if not quotes:
+                print(f"No valid call options found for {symbol}, using fallback")
+                return self._get_fallback_call_options(symbol)
+            
+            return quotes
+            
+        except Exception as e:
+            print(f"Error fetching call options for {symbol}: {e}")
+            return self._get_fallback_call_options(symbol)
+    
+    def _get_fallback_call_options(self, symbol: str) -> List[OptionQuote]:
+        """Generate fallback call options if Yahoo Finance fails."""
+        current_price = self.get_current_price(symbol)
+        quotes = []
+        base_date = date.today()
+        
+        # Generate realistic call options as fallback
+        for days_offset in [30, 34, 38, 42]:
+            expiration = base_date + timedelta(days=days_offset)
+            
+            # Widen strike range around current price to include more strikes
+            for strike_offset in [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60]:
+                strike = current_price + strike_offset
+                if strike <= 0:
+                    continue
+                
+                # Call premium decreases as strike increases above current price
+                if strike > current_price:
+                    mid = max(0.01, (current_price - strike) * 0.1 + 2.0)
+                else:
+                    mid = max(0.01, current_price - strike + 2.0)
+                
+                spread = mid * 0.1
+                bid = max(0.01, mid - spread)
+                ask = mid + spread
                 
                 volume = random.randint(100, 2000)
                 open_interest = random.randint(500, 5000)
@@ -677,6 +963,112 @@ async def get_history(
         return {"symbol": u_sym, "period": used_period, "interval": used_interval, "data": data}
     except HTTPException:
         raise
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/scan-calls")
+async def scan_covered_calls(
+    symbol: str = Query(..., description="Stock symbol to scan"),
+    dte_min: int = Query(30, description="Minimum days to expiry"),
+    dte_max: int = Query(45, description="Maximum days to expiry"),
+    delta_min: float = Query(0.15, description="Minimum delta"),
+    delta_max: float = Query(0.30, description="Maximum delta"),
+    min_oi: int = Query(500, description="Minimum open interest"),
+    max_spread_pct: float = Query(0.10, description="Maximum spread percentage"),
+    capital: Optional[float] = Query(None, description="Value of shares owned (USD)"),
+    target_income: Optional[float] = Query(None, description="Target monthly income (USD)"),
+    use_bid: bool = Query(False, description="Use bid price (conservative) for premium and metrics"),
+    pop_otm_fallback: float = Query(0.70, description="Fallback POP when OTM (if IV unavailable)"),
+    pop_itm_fallback: float = Query(0.30, description="Fallback POP when ITM (if IV unavailable)"),
+    otm_only: bool = Query(True, description="Only include OTM calls (strike above current price)"),
+):
+    """Scan for covered call opportunities."""
+    try:
+        # Get current price and call options
+        current_price = data_adapter.get_current_price(symbol.upper())
+        call_quotes = data_adapter.get_call_options(symbol.upper())
+        
+        # Rank the calls for covered call strategy
+        ranked_calls = rank_covered_calls(
+            call_quotes,
+            current_price,
+            dte_min,
+            dte_max,
+            delta_min,
+            delta_max,
+            min_oi,
+            max_spread_pct,
+            capital=capital,
+            use_bid=use_bid,
+            pop_otm_fallback=pop_otm_fallback,
+            pop_itm_fallback=pop_itm_fallback,
+            otm_only=otm_only,
+        )
+        
+        # Convert to dict format for JSON response
+        results = []
+        for call in ranked_calls:
+            # For covered calls: we own 100 shares per contract
+            shares_per_contract = 100
+            share_value_per_contract = current_price * shares_per_contract
+            premium = (call.bid if use_bid else call.mid)
+            income_per_contract = premium * 100.0  # premium dollars received per contract
+            contracts = 0
+            capital_used = 0.0
+            income_total = 0.0
+            
+            if capital is not None and capital > 0:
+                contracts = int(capital // share_value_per_contract)
+                if contracts > 0:
+                    capital_used = contracts * share_value_per_contract
+                    income_total = contracts * income_per_contract
+
+            # Calculate delta for calls
+            delta_abs_val = None
+            try:
+                import math
+                T = max(1e-6, call.days_to_expiry / 365.0)
+                sigma = getattr(call, "iv", None)
+                if not sigma or sigma <= 0:
+                    sigma = 0.30
+                d1 = (math.log(max(1e-9, current_price / call.strike)) + 0.5 * sigma * sigma * T) / (sigma * math.sqrt(T))
+                def phi(x: float) -> float:
+                    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+                call_delta = phi(d1)
+                delta_abs_val = abs(call_delta)
+            except Exception:
+                delta_abs_val = None
+
+            results.append({
+                "symbol": call.symbol,
+                "expiration": call.expiration.isoformat(),
+                "strike": call.strike,
+                "bid": call.bid,
+                "ask": call.ask,
+                "mid": call.mid,
+                "volume": call.volume,
+                "open_interest": call.open_interest,
+                "days_to_expiry": call.days_to_expiry,
+                "aroc": call.aroc,
+                "monthly_income": call.monthly_income,
+                "monthly_yield_pct": call.monthly_income,
+                "pop": call.pop,
+                "breakeven": call.breakeven,
+                "max_loss": call.max_loss,
+                "max_loss_dollars": call.max_loss * 100.0,
+                "risk_reward": call.risk_reward,
+                "income_per_capital": (income_per_contract / share_value_per_contract) if share_value_per_contract > 0 else 0.0,
+                "contracts": contracts,
+                "capital_per_contract": share_value_per_contract,
+                "capital_used": capital_used,
+                "income_per_contract": income_per_contract,
+                "income_total": income_total,
+                "delta_abs": delta_abs_val,
+                "score": call.score,
+            })
+        
+        return ScanResponse(results=results, total_found=len(results))
+        
     except Exception as e:
         return {"error": str(e)}
 
