@@ -104,18 +104,22 @@ const CandleMiniChart = ({ data }) => {
 
 // Formatting helpers available to both App and SummaryBar
 const formatMoney = (n) => {
-  if (n === null || n === undefined || Number.isNaN(n)) return "";
+  if (n === "" || n === null || n === undefined) return "";
+  const num = Number(n);
+  if (!Number.isFinite(num)) return "";
   try {
-    return Number(n).toLocaleString("en-US");
+    return num.toLocaleString("en-US");
   } catch {
-    return String(n);
+    return "";
   }
 };
 const parseMoney = (s) => {
-  if (s === null || s === undefined) return 0;
-  const cleaned = String(s).replace(/[^0-9.]/g, "");
+  if (s === null || s === undefined) return "";
+  const str = String(s);
+  const cleaned = str.replace(/[^0-9.]/g, "");
+  if (cleaned === "") return "";
   const num = Number(cleaned);
-  return Number.isFinite(num) ? num : 0;
+  return Number.isFinite(num) ? num : "";
 };
 const formatCurrency = (n, decimals = 2) => {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return `$${(0).toFixed(decimals)}`;
@@ -140,6 +144,22 @@ const formatDateMMDDYY = (s) => {
 const formatNumber = (n) => {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return "0";
   return Number(n).toLocaleString("en-US");
+};
+
+// Integer input helpers: allow blanks while typing and avoid leading zeros
+const parseInteger = (s) => {
+  if (s === null || s === undefined) return "";
+  const str = String(s);
+  const cleaned = str.replace(/[^0-9]/g, "");
+  if (cleaned === "") return "";
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : "";
+};
+const formatInteger = (n) => {
+  if (n === "" || n === null || n === undefined) return "";
+  const num = Number(n);
+  if (!Number.isFinite(num)) return "";
+  return String(num);
 };
 
 // Simple error boundary to isolate rendering errors in child components (e.g., SummaryBar)
@@ -169,7 +189,7 @@ class ErrorBoundary extends React.Component {
 function App() {
   const [symbol, setSymbol] = useState("AAPL");
   const [dteMin, setDteMin] = useState(1);
-  const [dteMax, setDteMax] = useState(90);
+  const [dteMax, setDteMax] = useState(45);
   const [minOI, setMinOI] = useState(100);
   const [capital, setCapital] = useState(100000); // USD
   const [targetIncome, setTargetIncome] = useState(10000); // USD per month
@@ -199,6 +219,10 @@ function App() {
   const [useBid, setUseBid] = useState(false);
   const [popOtmFallback, setPopOtmFallback] = useState(0.70);
   const [popItmFallback, setPopItmFallback] = useState(0.30);
+  // Section accordions
+  const [isCapitalOpen, setIsCapitalOpen] = useState(true);
+  const [isSymbolOpen, setIsSymbolOpen] = useState(true);
+  const [isParamsOpen, setIsParamsOpen] = useState(true);
 
   // Helpers moved to module scope
 
@@ -326,9 +350,13 @@ function App() {
     try {
       const params = new URLSearchParams();
       params.set("symbol", String(symbol || ""));
-      params.set("dte_min", String(dteMin));
-      params.set("dte_max", String(dteMax));
-      params.set("min_oi", String(minOI));
+      // Use defaults when fields are blank
+      const dteMinSafe = dteMin === "" ? 1 : Number(dteMin);
+      const dteMaxSafe = dteMax === "" ? 45 : Number(dteMax);
+      const minOISafe = minOI === "" ? 100 : Number(minOI);
+      params.set("dte_min", String(dteMinSafe));
+      params.set("dte_max", String(dteMaxSafe));
+      params.set("min_oi", String(minOISafe));
       // Conservative premium toggle
       params.set("use_bid", String(Boolean(useBid)));
 
@@ -383,6 +411,18 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capital, targetIncome, useBid, popOtmFallback, popItmFallback]);
 
+  // Auto-run scan when symbol changes (debounced)
+  useEffect(() => {
+    if (!symbol) return;
+    if (autoScanTimer) clearTimeout(autoScanTimer);
+    const t = setTimeout(() => {
+      handleScan();
+    }, 300);
+    setAutoScanTimer(t);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
   // Find the row whose strike is closest to the current underlying price
   const closestStrikeIndex = (price != null && Array.isArray(results) && results.length > 0)
     ? results.reduce((bestI, r, i) => {
@@ -396,10 +436,10 @@ function App() {
     : -1;
 
   return (
-    <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-8 pb-8`}>
+    <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-2 md:px-8 pb-8`}>
       {price != null && showStickyPrice && (
         <div className="fixed top-0 left-0 right-0 z-40 bg-gray-900 border-b border-gray-800 shadow-sm">
-          <div className="max-w-7xl mx-auto px-8 py-1 text-sm text-gray-100">
+          <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
             <span>
               Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>
               {companyName ? <span className="text-gray-300"> {companyName}</span> : null}: <span className="font-semibold text-white">${price.toFixed(2)}</span>
@@ -408,7 +448,7 @@ function App() {
         </div>
       )}
       <div className="flex items-center justify-between mb-2">
-        <h1 className="text-4xl font-bold text-blue-600">Cash-Secured Put Scanner</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-blue-600">Cash-Secured Put Scanner</h1>
         <button
           type="button"
           aria-label="About cash-secured puts"
@@ -422,21 +462,31 @@ function App() {
       </div>
       
       {/* Capital & Target (moved to top row) */}
-      <div className="bg-white rounded-lg shadow mb-6 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">Capital & Target Monthly Income</h2>
+      <div className="bg-white rounded-lg shadow mb-6 p-2 md:p-6">
+        <div className="px-3 md:px-0">
+        <div className="flex items-center justify-between mb-3">
           <button
             type="button"
-            aria-label="Capital & Target info"
-            className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
-            onClick={() => setCapitalInfoOpen(true)}
+            className="flex items-center gap-2 select-none"
+            onClick={() => setIsCapitalOpen((v) => !v)}
+            aria-expanded={isCapitalOpen}
+            aria-controls="capital-section"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-              <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className={`w-5 h-5 transition-transform ${isCapitalOpen ? 'rotate-90' : ''}`}
+            >
+              <path d="M9 5l7 7-7 7" />
             </svg>
+            <h2 className="text-xl font-semibold">Capital & Target Monthly Income</h2>
           </button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+        {isCapitalOpen && (
+        <div id="capital-section" className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
           <div className="flex flex-col h-full justify-end">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">Capital</span></span>
@@ -469,19 +519,53 @@ function App() {
               <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">USD</span>
             </div>
           </div>
+          <div className="flex items-center justify-end mb-2">
+            <button
+              type="button"
+              aria-label="Capital & Target info"
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
+              onClick={() => setCapitalInfoOpen(true)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        )}
         </div>
       </div>
 
       {/* Symbol Selection */}
-      <div className="bg-white rounded-lg shadow mb-6 p-6">
-        <h2 className="text-xl font-semibold mb-4">
-          Select Symbol
-          <span className="ml-2 text-gray-600 font-normal">
-            {symbol?.toUpperCase()}{iv != null ? ` (IV: ${(iv * 100).toFixed(0)}%)` : ''}
-          </span>
-        </h2>
-        
-        <div className="mb-4">
+      <div className="bg-white rounded-lg shadow mb-6 p-2 md:p-6">
+        <div className="flex items-center justify-between mb-3">
+          <button
+            type="button"
+            className="flex items-center gap-2 select-none"
+            onClick={() => setIsSymbolOpen((v) => !v)}
+            aria-expanded={isSymbolOpen}
+            aria-controls="symbol-section"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className={`w-5 h-5 transition-transform ${isSymbolOpen ? 'rotate-90' : ''}`}
+            >
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+            <h2 className="text-xl font-semibold">
+              Select Symbol
+              <span className="ml-2 text-gray-600 font-normal">
+                {symbol?.toUpperCase()}{iv != null ? ` (IV: ${(iv * 100).toFixed(0)}%)` : ''}
+              </span>
+            </h2>
+          </button>
+        </div>
+        {isSymbolOpen && (
+        <div id="symbol-section" className="mb-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <h3 className="text-lg font-medium mb-2">Tech Stocks</h3>
@@ -602,6 +686,7 @@ function App() {
             </div>
           </div>
         </div>
+        )}
 
       {capitalInfoOpen && (
         <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
@@ -741,60 +826,94 @@ function App() {
       </div>
 
       {/* Scan Parameters */}
-      <div className="bg-white rounded-lg shadow mb-6 p-6">
+      <div className="bg-white rounded-lg shadow mb-6 p-4 md:p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">Scan Parameters</h2>
           <button
             type="button"
-            aria-label="Scan Parameters info"
-            className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
-            onClick={() => setParamsInfoOpen(true)}
+            className="flex items-center gap-2 select-none"
+            onClick={() => setIsParamsOpen((v) => !v)}
+            aria-expanded={isParamsOpen}
+            aria-controls="params-section"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-              <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className={`w-5 h-5 transition-transform ${isParamsOpen ? 'rotate-90' : ''}`}
+            >
+              <path d="M9 5l7 7-7 7" />
             </svg>
+            <h2 className="text-xl font-semibold">Scan Parameters</h2>
+          </button>
+          <button
+            onClick={handleScan}
+            disabled={loading}
+            className="w-auto lg:min-w-[140px] px-3 md:px-4 py-2 bg-blue-600 text-white rounded-md text-sm md:text-base hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap -mt-0.5 md:-mt-1"
+          >
+            {loading ? "Scanning..." : "Scan Options"}
           </button>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 xl:grid-cols-8 gap-4 xl:gap-6 items-end">
+        {isParamsOpen && (
+        <div id="params-section">
+          <div className="flex items-center justify-end mb-2">
+            <button
+              type="button"
+              aria-label="Scan Parameters info"
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
+              onClick={() => setParamsInfoOpen(true)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
+              </svg>
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 xl:grid-cols-8 gap-3 md:gap-5 lg:gap-6 xl:gap-8 items-end">
           <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-2 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">DTE Min</span></span>
             </label>
             <input
-              type="number"
-              value={dteMin}
-              onChange={(e) => setDteMin(Number(e.target.value))}
+              type="text"
+              inputMode="numeric"
+              value={formatInteger(dteMin)}
+              onChange={(e) => setDteMin(parseInteger(e.target.value))}
               className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
             />
           </div>
           <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-2 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">DTE Max</span></span>
             </label>
             <input
-              type="number"
-              value={dteMax}
-              onChange={(e) => setDteMax(Number(e.target.value))}
+              type="text"
+              inputMode="numeric"
+              value={formatInteger(dteMax)}
+              onChange={(e) => setDteMax(parseInteger(e.target.value))}
               className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
             />
           </div>
           <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-2 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">Min Open Interest</span></span>
             </label>
             <input
-              type="number"
-              value={minOI}
-              onChange={(e) => setMinOI(Number(e.target.value))}
+              type="text"
+              inputMode="numeric"
+              value={formatInteger(minOI)}
+              onChange={(e) => setMinOI(parseInteger(e.target.value))}
               className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
             />
           </div>
+          {/* Force desktop line break so toggles start on a new row */}
+          <div className="hidden lg:block col-span-1 lg:col-span-7 xl:col-span-8" aria-hidden="true" />
           {/* Conservative premium toggle */}
-          <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+          <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-2 xl:col-span-2 min-w-0">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               <span className="inline-flex items-center gap-2 max-w-full"><span className="truncate min-w-0">Use Bid (Conservative)</span></span>
             </label>
-            <label className="flex items-center h-[40px] cursor-pointer select-none">
+            <label className="flex items-center h-[40px] cursor-pointer select-none w-full">
               <input
                 id="use-bid"
                 type="checkbox"
@@ -802,12 +921,14 @@ function App() {
                 onChange={(e) => setUseBid(e.target.checked)}
                 className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
               />
-              <span className="ml-2 text-sm text-gray-700">Conservative premium uses Bid for income and yields</span>
+              <span className="ml-2 lg:ml-3 text-sm text-gray-700 pr-3 sm:pr-6 lg:pr-10 xl:pr-16">Conservative premium uses Bid for income and yields</span>
             </label>
+            {/* Invisible helper to match POP OTM helper text height for vertical alignment */}
+            <div className="text-[11px] mt-1 invisible select-none">0–1 (default 0.70)</div>
           </div>
           {/* POP fallback controls */}
           <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               <span className="inline-flex items-center gap-2 max-w-full">
                 <span className="truncate min-w-0">POP OTM Fallback</span>
               </span>
@@ -824,7 +945,7 @@ function App() {
             <div className="text-[11px] text-gray-500 mt-1">0–1 (default 0.70)</div>
           </div>
           <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               <span className="inline-flex items-center gap-2 max-w-full">
                 <span className="truncate min-w-0">POP ITM Fallback</span>
               </span>
@@ -840,16 +961,9 @@ function App() {
             />
             <div className="text-[11px] text-gray-500 mt-1">0–1 (default 0.30)</div>
           </div>
-          <div className="flex items-end col-span-1 sm:col-span-2 lg:col-span-1 xl:col-span-2 mt-2 lg:mt-0">
-            <button
-              onClick={handleScan}
-              disabled={loading}
-              className="w-full lg:w-auto lg:min-w-[140px] px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-            >
-              {loading ? "Scanning..." : "Scan Options"}
-            </button>
-          </div>
         </div>
+        </div>
+        )}
 
         {paramsInfoOpen && (
           <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
@@ -973,7 +1087,7 @@ function App() {
 
       {/* Results */}
       <div className="-mx-8 md:mx-0 p-0 md:p-6 bg-transparent md:bg-white rounded-none md:rounded-lg shadow-none md:shadow">
-        <div className="flex items-center justify-between mb-4 px-8 md:px-0">
+        <div className="flex items-center justify-between mb-4 px-[60px] md:px-0">
           <h2 className="text-xl font-semibold">Results</h2>
           <button
             type="button"
@@ -987,21 +1101,23 @@ function App() {
           </button>
         </div>
         {/* Summary */}
-        <ErrorBoundary name="SummaryBar">
-          <SummaryBar results={results} targetIncome={targetIncome} selected={
-            selectedIndex != null && selectedIndex >= 0 && selectedIndex < results.length
-              ? results[selectedIndex]
-              : null
-          } />
-        </ErrorBoundary>
+        <div className="px-16 md:px-0">
+          <ErrorBoundary name="SummaryBar">
+            <SummaryBar results={results} targetIncome={targetIncome} selected={
+              selectedIndex != null && selectedIndex >= 0 && selectedIndex < results.length
+                ? results[selectedIndex]
+                : null
+            } />
+          </ErrorBoundary>
+        </div>
         {loading ? (
           <div className="text-center py-8">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             <p className="mt-2 text-gray-600">Scanning for options...</p>
           </div>
         ) : results.length > 0 ? (
-          <div>
-            <div className="overflow-x-auto">
+          <div className="-mx-1 md:mx-0">
+            <div className="overflow-x-auto pl-8 pr-8 md:px-0">
               <table className="min-w-full table-auto border-collapse">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
@@ -1063,7 +1179,7 @@ function App() {
                             const baseClass = selected ? tdBaseSelected : (isAboveSelected ? tdBaseNoBottom : tdBase);
                             return (
                               <>
-                                <td className={baseClass}>{formatCurrency(Number(put?.strike))}</td>
+                                <td className={`${baseClass} text-gray-900 font-semibold`}>{formatCurrency(Number(put?.strike))}</td>
                                 <td className={baseClass}>{put.days_to_expiry}d</td>
                                 <td className={baseClass}>{formatCurrency(put.bid)}</td>
                                 <td className={baseClass}>{formatCurrency(put.ask)}</td>
