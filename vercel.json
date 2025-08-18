@@ -3,6 +3,7 @@
     { "source": "/price",   "destination": "https://options-scanner-dye9.onrender.com/price" },
     { "source": "/history", "destination": "https://options-scanner-dye9.onrender.com/history" },
     { "source": "/scan",    "destination": "https://options-scanner-dye9.onrender.com/scan" },
+    { "source": "/scan-calls", "destination": "https://options-scanner-dye9.onrender.com/scan-calls" },
     { "source": "/health",  "destination": "https://options-scanner-dye9.onrender.com/health" }
   ]
 }
