@@ -478,17 +478,17 @@ function App() {
       // Covered calls: explicitly request OTM-only by default (backend also defaults true)
       if (strategy === "calls") {
         params.set("otm_only", "true");
-        // Delta filters
-        let dMin = (deltaMin === "" || !Number.isFinite(Number(deltaMin))) ? 0.15 : Number(deltaMin);
-        let dMax = (deltaMax === "" || !Number.isFinite(Number(deltaMax))) ? 0.30 : Number(deltaMax);
-        dMin = Math.max(0, Math.min(1, dMin));
-        dMax = Math.max(0, Math.min(1, dMax));
-        if (dMin > dMax) {
-          const tmp = dMin; dMin = dMax; dMax = tmp;
-        }
-        params.set("delta_min", String(dMin));
-        params.set("delta_max", String(dMax));
       }
+      // Delta filters (apply to both puts and calls)
+      let dMin = (deltaMin === "" || !Number.isFinite(Number(deltaMin))) ? 0.15 : Number(deltaMin);
+      let dMax = (deltaMax === "" || !Number.isFinite(Number(deltaMax))) ? 0.30 : Number(deltaMax);
+      dMin = Math.max(0, Math.min(1, dMin));
+      dMax = Math.max(0, Math.min(1, dMax));
+      if (dMin > dMax) {
+        const tmp = dMin; dMin = dMax; dMax = tmp;
+      }
+      params.set("delta_min", String(dMin));
+      params.set("delta_max", String(dMax));
 
       // Use different endpoints based on strategy
       const endpoint = strategy === "calls" ? "/scan-calls" : "/scan";
@@ -606,8 +606,8 @@ function App() {
 
   // Find the row whose strike is closest to the current underlying price (computed later on displayResults)
 
-  // Apply delta filter on client for calls to adjust displayed strikes to current delta settings (backend also filters)
-  const resultsForDisplay = strategy === "calls"
+  // Apply delta filter on client for both calls and puts to adjust displayed strikes to current delta settings (backend also filters)
+  const resultsForDisplay = (strategy === "calls" || strategy === "puts")
     ? results.filter((r) => {
         const d = Number(r?.delta_abs);
         // If delta couldn't be computed on backend, keep the row (mimic backend behavior)
@@ -1198,40 +1198,38 @@ function App() {
           </div>
           {/* Force desktop line break so toggles start on a new row */}
           <div className="hidden lg:block col-span-1 lg:col-span-7 xl:col-span-8" aria-hidden="true" />
-          {strategy === "calls" && (
-            <>
-              <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <span className="inline-flex items-center gap-2 max-w-full">
-                    <span className="truncate min-w-0">Delta Min</span>
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={formatDecimal(deltaMin)}
-                  onChange={(e) => setDeltaMin(parseDecimal(e.target.value))}
-                  className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
-                />
-                <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.15)</div>
-              </div>
-              <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <span className="inline-flex items-center gap-2 max-w-full">
-                    <span className="truncate min-w-0">Delta Max</span>
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={formatDecimal(deltaMax)}
-                  onChange={(e) => setDeltaMax(parseDecimal(e.target.value))}
-                  className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
-                />
-                <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.30)</div>
-              </div>
-            </>
-          )}
+          <>
+            <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <span className="inline-flex items-center gap-2 max-w-full">
+                  <span className="truncate min-w-0">Delta Min</span>
+                </span>
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={formatDecimal(deltaMin)}
+                onChange={(e) => setDeltaMin(parseDecimal(e.target.value))}
+                className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
+              />
+              <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.15)</div>
+            </div>
+            <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-1 min-w-0">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <span className="inline-flex items-center gap-2 max-w-full">
+                  <span className="truncate min-w-0">Delta Max</span>
+                </span>
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={formatDecimal(deltaMax)}
+                onChange={(e) => setDeltaMax(parseDecimal(e.target.value))}
+                className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
+              />
+              <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.30)</div>
+            </div>
+          </>
           {/* Conservative premium toggle */}
           <div className="flex flex-col h-full justify-end col-span-1 lg:col-span-2 xl:col-span-2 min-w-0">
             <label className="block text-sm font-medium text-gray-700 mb-2">
