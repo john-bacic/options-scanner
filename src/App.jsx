@@ -305,12 +305,16 @@ function App() {
     } catch { return 'USD'; }
   });
   const [fxUsdToCad, setFxUsdToCad] = useState(() => {
-    if (typeof window === 'undefined') return 1.35;
+    if (typeof window === 'undefined') return 1.39;
     try {
       const raw = localStorage.getItem('options.fxUsdToCad');
       const n = Number(raw);
-      return Number.isFinite(n) && n > 0 ? n : 1.35;
-    } catch { return 1.35; }
+      if (Number.isFinite(n) && n > 0) {
+        // Migrate old default 1.35 to the updated rate 1.39
+        return n === 1.35 ? 1.39 : n;
+      }
+      return 1.39;
+    } catch { return 1.39; }
   });
   const currCode = currency === 'CAD' ? 'CAD' : 'USD';
   const toDisplay = (usd) => {
