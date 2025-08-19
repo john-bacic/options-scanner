@@ -16,14 +16,19 @@ const API_BASE = (() => {
 const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
 
 // Tooltip for mini line chart that shows full year and selected timeframe
-function MiniTooltip({ active, payload, label, range }) {
+function MiniTooltip({ active, payload, label, range, currency = "USD", rate = 1 }) {
   if (!active || !payload || !payload.length) return null;
   const p = payload[0]?.payload || {};
   const d = p.dateFull ? new Date(p.dateFull) : null;
   const dateStr = d && !isNaN(d.getTime())
     ? d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" })
     : (p.dateFull || label || "");
-  const price = typeof p.close === 'number' && isFinite(p.close) ? `$${p.close.toFixed(2)}` : "";
+  const priceVal = typeof p.close === 'number' && isFinite(p.close) ? Number(p.close) : null;
+  const currCode = currency === "CAD" ? "CAD" : "USD";
+  const disp = priceVal != null ? (currCode === "CAD" ? priceVal * Number(rate) : priceVal) : null;
+  const price = disp != null
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: currCode, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(disp)
+    : "";
   return (
     <div className="rounded border border-gray-200 bg-white p-2 text-xs shadow">
       <div className="flex items-center justify-between gap-2 mb-1">
@@ -290,6 +295,47 @@ function App() {
   const [strategy, setStrategy] = useState("puts"); // "puts" | "calls"
 
   // Helpers moved to module scope
+
+  // Currency and FX
+  const [currency, setCurrency] = useState(() => {
+    if (typeof window === 'undefined') return 'USD';
+    try {
+      const c = localStorage.getItem('options.currency');
+      return c === 'CAD' ? 'CAD' : 'USD';
+    } catch { return 'USD'; }
+  });
+  const [fxUsdToCad, setFxUsdToCad] = useState(() => {
+    if (typeof window === 'undefined') return 1.35;
+    try {
+      const raw = localStorage.getItem('options.fxUsdToCad');
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? n : 1.35;
+    } catch { return 1.35; }
+  });
+  const currCode = currency === 'CAD' ? 'CAD' : 'USD';
+  const toDisplay = (usd) => {
+    const n = Number(usd);
+    if (!Number.isFinite(n)) return 0;
+    return currency === 'CAD' ? n * fxUsdToCad : n;
+  };
+  const fromDisplay = (val) => {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return "";
+    return currency === 'CAD' ? n / fxUsdToCad : n;
+  };
+  const formatCurrencyUI = (usd, decimals = 2) => {
+    const n = toDisplay(usd);
+    try {
+      return Number(n).toLocaleString('en-US', {
+        style: 'currency',
+        currency: currCode,
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      });
+    } catch {
+      return `${currCode === 'CAD' ? 'CA$' : '$'}${Number(n || 0).toFixed(decimals)}`;
+    }
+  };
 
   const handleSymbolSelect = (selectedSymbol) => {
     setSymbol(selectedSymbol);
@@ -590,6 +636,16 @@ function App() {
     try { localStorage.setItem('options.targetIncome', targetIncome === '' ? '' : String(targetIncome)); } catch {}
   }, [targetIncome]);
 
+  // Persist currency & FX
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('options.currency', currency); } catch {}
+  }, [currency]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('options.fxUsdToCad', String(fxUsdToCad)); } catch {}
+  }, [fxUsdToCad]);
+
   // Auto-run scan when price loads/changes in Calls to apply shares * price capital
   useEffect(() => {
     if (!symbol) return;
@@ -666,7 +722,7 @@ function App() {
           <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
             <span>
               Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>
-              {companyName ? <span className="text-gray-300"> {companyName}</span> : null}: <span className="font-semibold text-white">${price.toFixed(2)}</span>
+              {companyName ? <span className="text-gray-300"> {companyName}</span> : null}: <span className="font-semibold text-white">{formatCurrency(price)}</span>
             </span>
           </div>
         </div>
@@ -738,6 +794,27 @@ function App() {
               {strategy === "calls" ? "Shares & Target Monthly Income" : "Capital & Target Monthly Income"}
             </h2>
           </button>
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-md border border-gray-300 overflow-hidden">
+              <button
+                type="button"
+                className={`px-2 py-1 text-xs ${currency === 'USD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                onClick={() => setCurrency('USD')}
+              >
+                USD
+              </button>
+              <button
+                type="button"
+                className={`px-2 py-1 text-xs ${currency === 'CAD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                onClick={() => setCurrency('CAD')}
+              >
+                CAD
+              </button>
+            </div>
+            {currency === 'CAD' && (
+              <span className="text-xs text-gray-600">1 USD = {fxUsdToCad.toFixed(4)} CAD</span>
+            )}
+          </div>
         </div>
         {isCapitalOpen && (
         <div id="capital-section" className={"grid grid-cols-1 " + (strategy === "calls" ? "md:grid-cols-3 " : "md:grid-cols-2 ") + "gap-4 items-end"}>
@@ -765,11 +842,15 @@ function App() {
                   <input
                     type="text"
                     inputMode="decimal"
-                    value={formatMoney(capital)}
-                    onChange={(e) => setCapital(parseMoney(e.target.value))}
+                    value={capital === '' ? '' : formatMoney(toDisplay(capital))}
+                    onChange={(e) => {
+                      const v = parseMoney(e.target.value);
+                      if (v === '') setCapital('');
+                      else setCapital(fromDisplay(v));
+                    }}
                     className="w-full pr-12 pl-7 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">USD</span>
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">{currCode}</span>
                 </>
               )}
             </div>
@@ -784,12 +865,12 @@ function App() {
                 <input
                   type="text"
                   inputMode="decimal"
-                  value={price != null && shareCount !== "" && Number.isFinite(Number(shareCount)) ? formatMoney(Number(shareCount) * Number(price)) : ""}
+                  value={price != null && shareCount !== "" && Number.isFinite(Number(shareCount)) ? formatMoney(toDisplay(Number(shareCount) * Number(price))) : ""}
                   readOnly
                   disabled
                   className="w-full pr-12 pl-7 py-2 border border-gray-200 bg-gray-50 rounded-md focus:outline-none"
                 />
-                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">USD</span>
+                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">{currCode}</span>
               </div>
             </div>
           )}
@@ -802,11 +883,15 @@ function App() {
               <input
                 type="text"
                 inputMode="decimal"
-                value={formatMoney(targetIncome)}
-                onChange={(e) => setTargetIncome(parseMoney(e.target.value))}
+                value={targetIncome === '' ? '' : formatMoney(toDisplay(targetIncome))}
+                onChange={(e) => {
+                  const v = parseMoney(e.target.value);
+                  if (v === '') setTargetIncome('');
+                  else setTargetIncome(fromDisplay(v));
+                }}
                 className="w-full pr-12 pl-7 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">USD</span>
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">{currCode}</span>
             </div>
           </div>
           <div className="flex items-center justify-end mb-2">
@@ -913,7 +998,7 @@ function App() {
             ) : price != null ? (
               <span>
                 Current price for <span className="font-semibold">{symbol.toUpperCase()}</span>
-                {companyName ? <span className="text-gray-500"> {companyName}</span> : null}: <span className="font-semibold">${price.toFixed(2)}</span>
+                {companyName ? <span className="text-gray-500"> {companyName}</span> : null}: <span className="font-semibold">{formatCurrency(price)}</span>
               </span>
             ) : (
               <span>Enter a symbol to see the current price.</span>
@@ -948,7 +1033,7 @@ function App() {
                         tickFormatter={(v) => formatDateMMDDYY(v)}
                       />
                       <YAxis tick={{ fontSize: 10 }} width={40} domain={["auto", "auto"]} axisLine={{ stroke: '#ffffff' }} tickLine={false} />
-                      <ReTooltip content={<MiniTooltip range={chartRangeKey} />} cursor={{ stroke: '#ffffff', strokeWidth: 1 }} />
+                      <ReTooltip content={<MiniTooltip range={chartRangeKey} currency="USD" rate={1} />} cursor={{ stroke: '#ffffff', strokeWidth: 1 }} />
                       <Line type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
@@ -998,11 +1083,11 @@ function App() {
               </div>
               <div className="space-y-3 text-sm text-gray-700">
                 <div>
-                  <div className="font-semibold">Capital (USD)</div>
+                  <div className="font-semibold">Capital ({currCode})</div>
                   <p>Cash available to secure puts. Contracts = floor(Capital ÷ (Strike × 100)). Capital Used and Income Total are based on this sizing.</p>
                 </div>
                 <div>
-                  <div className="font-semibold">Target Monthly Income (USD)</div>
+                  <div className="font-semibold">Target Monthly Income ({currCode})</div>
                   <p>Your monthly income goal. Used to compute the “Progress to Target” metric in the summary; it does not affect ranking/sizing yet.</p>
                 </div>
               </div>
@@ -1485,7 +1570,7 @@ function App() {
               selectedIndex != null && selectedIndex >= 0 && Array.isArray(displayResults) && selectedIndex < displayResults.length
                 ? displayResults[selectedIndex]
                 : null
-            } />
+            } currency={currency} rate={fxUsdToCad} />
           </ErrorBoundary>
         </div>
         {loading ? (
@@ -1567,15 +1652,15 @@ function App() {
                               <>
                                 <td className={`${baseClass} text-gray-900 font-semibold`}>{formatCurrency(Number(put?.strike))}</td>
                                 <td className={baseClass}>{put.days_to_expiry}d</td>
-                                <td className={baseClass}>{formatCurrency(put.bid)}</td>
-                                <td className={baseClass}>{formatCurrency(put.ask)}</td>
+                                <td className={baseClass}>{formatCurrencyUI(put.bid)}</td>
+                                <td className={baseClass}>{formatCurrencyUI(put.ask)}</td>
                                 <td className={baseClass}>{formatNumber(put.open_interest)}</td>
                                 <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
-                                <td className={baseClass}>{formatCurrency(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
+                                <td className={baseClass}>{formatCurrencyUI(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
                                 <td className={baseClass}>{formatNumber(put.contracts ?? 0)}</td>
-                                <td className={baseClass}>{formatCurrency(put.capital_used ?? 0, 0)}</td>
-                                <td className={baseClass}>{formatCurrency(put.income_per_contract ?? put.mid)}</td>
-                                <td className={baseClass}>{formatCurrency(put.income_total ?? 0)}</td>
+                                <td className={baseClass}>{formatCurrencyUI(put.capital_used ?? 0, 0)}</td>
+                                <td className={baseClass}>{formatCurrencyUI(put.income_per_contract ?? put.mid)}</td>
+                                <td className={baseClass}>{formatCurrencyUI(put.income_total ?? 0)}</td>
                                 <td className={baseClass}>{put.pop != null ? `${(Number(put.pop) * 100).toFixed(0)}%` : 'N/A'}</td>
                                 <td className={baseClass}>{put.score?.toFixed(2) || 'N/A'}</td>
                               </>
