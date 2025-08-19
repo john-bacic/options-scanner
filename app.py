@@ -544,12 +544,27 @@ class YahooFinanceAdapter:
                         except Exception:
                             iv = None
                         
-                        # Skip if no bid/ask or very low liquidity
-                        if bid <= 0 or ask <= 0 or open_interest < 100:
+                        # Skip if very low liquidity
+                        if open_interest < 100:
                             continue
                         
-                        # Calculate mid price and spread percentage
-                        mid = (bid + ask) / 2
+                        # Use lastPrice as primary source (more reliable than bid/ask from Yahoo)
+                        last_price = put.get('lastPrice', 0)
+                        if last_price > 0:
+                            mid = last_price
+                            # Estimate bid/ask spread around last price
+                            spread_pct = 0.1  # 10% spread estimate
+                            bid = mid * (1 - spread_pct/2)
+                            ask = mid * (1 + spread_pct/2)
+                        elif bid > 0 and ask > 0:
+                            mid = (bid + ask) / 2
+                        else:
+                            # Fallback: estimate premium based on strike distance
+                            mid = max(0.01, abs(strike - current_price) * 0.1)
+                            bid = mid * 0.9
+                            ask = mid * 1.1
+                        
+                        # Calculate spread percentage
                         spread_pct = (ask - bid) / mid if mid > 0 else 1.0
                         
                         # Skip if spread is too wide (>50%)
@@ -677,12 +692,27 @@ class YahooFinanceAdapter:
                         except Exception:
                             iv = None
                         
-                        # Skip if no bid/ask or very low liquidity
-                        if bid <= 0 or ask <= 0 or open_interest < 100:
+                        # Skip if very low liquidity
+                        if open_interest < 100:
                             continue
                         
-                        # Calculate mid price and spread percentage
-                        mid = (bid + ask) / 2
+                        # Use lastPrice as primary source (more reliable than bid/ask from Yahoo)
+                        last_price = call.get('lastPrice', 0)
+                        if last_price > 0:
+                            mid = last_price
+                            # Estimate bid/ask spread around last price
+                            spread_pct = 0.1  # 10% spread estimate
+                            bid = mid * (1 - spread_pct/2)
+                            ask = mid * (1 + spread_pct/2)
+                        elif bid > 0 and ask > 0:
+                            mid = (bid + ask) / 2
+                        else:
+                            # Fallback: estimate premium based on strike distance
+                            mid = max(0.01, abs(strike - current_price) * 0.1)
+                            bid = mid * 0.9
+                            ask = mid * 1.1
+                        
+                        # Calculate spread percentage
                         spread_pct = (ask - bid) / mid if mid > 0 else 1.0
                         
                         # Skip if spread is too wide (>50%)
@@ -773,7 +803,7 @@ app = FastAPI(title="Cash‑Secured Put Scanner", version="0.2.0")
 # Mount static directory for React build
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend_build")
 if os.path.isdir(FRONTEND_DIR):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIR, "assets")), name="assets")
 
 # Add CORS middleware
 app.add_middleware(
@@ -789,17 +819,22 @@ data_adapter = YahooFinanceAdapter()
 
 @app.get("/")
 async def root():
+    """Serve the React frontend."""
+    from fastapi.responses import FileResponse
+    frontend_index = os.path.join(FRONTEND_DIR, "index.html")
+    if os.path.exists(frontend_index):
+        return FileResponse(frontend_index)
     return {"message": "Cash-Secured Put Scanner API"}
 
 @app.get("/scan")
 async def scan_options(
     symbol: str = Query(..., description="Stock symbol to scan"),
-    dte_min: int = Query(30, description="Minimum days to expiry"),
-    dte_max: int = Query(45, description="Maximum days to expiry"),
-    delta_min: float = Query(0.15, description="Minimum delta"),
-    delta_max: float = Query(0.30, description="Maximum delta"),
-    min_oi: int = Query(500, description="Minimum open interest"),
-    max_spread_pct: float = Query(0.10, description="Maximum spread percentage"),
+    dte_min: int = Query(1, description="Minimum days to expiry"),
+    dte_max: int = Query(60, description="Maximum days to expiry"),
+    delta_min: float = Query(0.05, description="Minimum delta"),
+    delta_max: float = Query(0.50, description="Maximum delta"),
+    min_oi: int = Query(100, description="Minimum open interest"),
+    max_spread_pct: float = Query(0.20, description="Maximum spread percentage"),
     capital: Optional[float] = Query(None, description="Capital available for cash-secured puts (USD)"),
     target_income: Optional[float] = Query(None, description="Target monthly income (USD)"),
     use_bid: bool = Query(False, description="Use bid price (conservative) for premium and metrics"),
@@ -969,12 +1004,12 @@ async def get_history(
 @app.get("/scan-calls")
 async def scan_covered_calls(
     symbol: str = Query(..., description="Stock symbol to scan"),
-    dte_min: int = Query(30, description="Minimum days to expiry"),
-    dte_max: int = Query(45, description="Maximum days to expiry"),
-    delta_min: float = Query(0.15, description="Minimum delta"),
-    delta_max: float = Query(0.30, description="Maximum delta"),
-    min_oi: int = Query(500, description="Minimum open interest"),
-    max_spread_pct: float = Query(0.10, description="Maximum spread percentage"),
+    dte_min: int = Query(1, description="Minimum days to expiry"),
+    dte_max: int = Query(60, description="Maximum days to expiry"),
+    delta_min: float = Query(0.05, description="Minimum delta"),
+    delta_max: float = Query(0.50, description="Maximum delta"),
+    min_oi: int = Query(100, description="Minimum open interest"),
+    max_spread_pct: float = Query(0.20, description="Maximum spread percentage"),
     capital: Optional[float] = Query(None, description="Value of shares owned (USD)"),
     target_income: Optional[float] = Query(None, description="Target monthly income (USD)"),
     use_bid: bool = Query(False, description="Use bid price (conservative) for premium and metrics"),
