@@ -410,18 +410,47 @@ class YahooFinanceAdapter:
         """Get current stock price from Yahoo Finance."""
         try:
             ticker = yf.Ticker(symbol.upper())
-            info = ticker.info
-            current_price = info.get('regularMarketPrice', info.get('currentPrice', 0))
-            
-            if not current_price:
-                # Fallback to last close price
-                hist = ticker.history(period="1d")
+            info = ticker.info or {}
+
+            # Determine market state (REGULAR/TRADING means open). Anything else -> use last close
+            market_state = str(info.get('marketState') or '').upper()
+            open_states = {"REGULAR", "TRADING"}
+
+            # If market is closed (POST, PRE, CLOSED, etc.), return the last official close
+            if market_state and market_state not in open_states:
+                for key in ("regularMarketPreviousClose", "previousClose"):
+                    try:
+                        val = float(info.get(key) or 0)
+                        if val > 0 and math.isfinite(val):
+                            return val
+                    except Exception:
+                        pass
+                # Fallback to recent historical close (last valid close in up to 5 days)
+                hist = ticker.history(period="5d", interval="1d")
                 if not hist.empty:
-                    current_price = hist['Close'].iloc[-1]
-                else:
-                    raise ValueError(f"Could not get price for {symbol}")
-            
-            return float(current_price)
+                    last_close_series = hist['Close'].dropna()
+                    if not last_close_series.empty:
+                        return float(last_close_series.iloc[-1])
+
+            # Market open or unknown: prefer real-time price, fallback to last close
+            current_price = info.get('regularMarketPrice') or info.get('currentPrice') or 0
+            try:
+                current_price = float(current_price)
+            except Exception:
+                current_price = 0.0
+
+            if current_price and current_price > 0 and math.isfinite(current_price):
+                return current_price
+
+            # Fallback to last close via history
+            hist = ticker.history(period="5d", interval="1d")
+            if not hist.empty:
+                last_close_series = hist['Close'].dropna()
+                if not last_close_series.empty:
+                    return float(last_close_series.iloc[-1])
+
+            # As a last resort, raise to trigger adapter fallback
+            raise ValueError(f"Could not get price for {symbol}")
         except Exception as e:
             print(f"Error getting price for {symbol}: {e}")
             # Fallback to mock price for reliability
