@@ -426,6 +426,35 @@ class YahooFinanceAdapter:
             print(f"Error getting price for {symbol}: {e}")
             # Fallback to mock price for reliability
             return self._get_fallback_price(symbol)
+
+    def get_fx_usd_to_cad(self) -> float:
+        """Fetch USD->CAD FX rate from Yahoo Finance.
+        Tries 'CAD=X' first (Yahoo pair for USD/CAD), then 'USDCAD=X'.
+        Returns a positive float; falls back to 1.39 if unavailable.
+        """
+        try:
+            symbols = ("CAD=X", "USDCAD=X")
+            for sym in symbols:
+                try:
+                    t = yf.Ticker(sym)
+                    # Prefer history for reliability
+                    hist = t.history(period="1d", interval="1d")
+                    if not hist.empty:
+                        rate = float(hist['Close'].iloc[-1])
+                        if rate > 0 and math.isfinite(rate):
+                            return rate
+                    # Fallback to info
+                    info = t.info
+                    rate = info.get('regularMarketPrice') or info.get('previousClose') or 0
+                    rate = float(rate)
+                    if rate > 0 and math.isfinite(rate):
+                        return rate
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Sensible fallback
+        return 1.39
     
     def _get_fallback_price(self, symbol: str) -> float:
         """Fallback price if Yahoo Finance fails."""
@@ -1131,6 +1160,30 @@ async def get_price(symbol: str = Query(..., description="Stock symbol to fetch 
         return {"symbol": symbol.upper(), "price": price, "name": name, "iv": iv}
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/fx/usd_cad")
+async def fx_usd_cad():
+    """Return current USD->CAD FX rate from Yahoo Finance.
+    Response: { base: 'USD', quote: 'CAD', pair: 'USD/CAD', rate: float, as_of: ISO8601Z }
+    """
+    try:
+        rate = data_adapter.get_fx_usd_to_cad()
+        return {
+            "base": "USD",
+            "quote": "CAD",
+            "pair": "USD/CAD",
+            "rate": float(rate),
+            "as_of": datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    except Exception as e:
+        return {
+            "base": "USD",
+            "quote": "CAD",
+            "pair": "USD/CAD",
+            "rate": 1.39,
+            "as_of": datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "error": str(e),
+        }
 
 # =====================
 # Reminder for the user

@@ -650,6 +650,31 @@ function App() {
     try { localStorage.setItem('options.fxUsdToCad', String(fxUsdToCad)); } catch {}
   }, [fxUsdToCad]);
 
+  // Fetch live FX rate USD->CAD and refresh periodically
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let alive = true;
+    const fetchFx = async () => {
+      try {
+        const res = await fetch(apiUrl('/fx/usd_cad'));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rate = Number(data?.rate);
+        // Basic sanity bounds to avoid corrupting state on bad responses
+        if (alive && Number.isFinite(rate) && rate > 0 && rate < 10) {
+          setFxUsdToCad(rate);
+        }
+      } catch (e) {
+        console.warn('FX fetch error', e);
+      }
+    };
+    // Initial fetch on mount / when currency toggles
+    fetchFx();
+    // Refresh every 30 minutes
+    const id = setInterval(fetchFx, 30 * 60 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, [currency]);
+
   // Auto-run scan when price loads/changes in Calls to apply shares * price capital
   useEffect(() => {
     if (!symbol) return;
@@ -721,16 +746,16 @@ function App() {
 
   return (
     <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-2 md:px-8 pb-8`}>
-      {price != null && showStickyPrice && (
-        <div className="fixed top-0 left-0 right-0 z-40 bg-gray-900 border-b border-gray-800 shadow-sm">
-          <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
-            <span>
-              Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>
-              {companyName ? <span className="text-gray-300"> {companyName}</span> : null}: <span className="font-semibold text-white">{formatCurrency(price)}</span>
-            </span>
-          </div>
-        </div>
-      )}
+          {price != null && showStickyPrice && (
+            <div className="fixed top-0 left-0 right-0 z-40 bg-gray-900 border-b border-gray-800 shadow-sm">
+              <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
+                <span>
+                  Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>
+                  {companyName ? <span className="text-gray-300"> {companyName}</span> : null}: <span className="font-semibold text-white">{formatCurrency(price)}</span>
+                </span>
+              </div>
+            </div>
+          )}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl md:text-3xl font-bold text-blue-600">Options Strategy Scanner</h1>
         <button
@@ -750,16 +775,6 @@ function App() {
         <div className="border-b border-gray-200">
           <nav className="-mb-px flex space-x-8">
             <button
-              onClick={() => setStrategy("puts")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                strategy === "puts"
-                  ? "border-blue-500 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              Cash-Secured Puts
-            </button>
-            <button
               onClick={() => setStrategy("calls")}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${
                 strategy === "calls"
@@ -768,6 +783,16 @@ function App() {
               }`}
             >
               Covered Calls
+            </button>
+            <button
+              onClick={() => setStrategy("puts")}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                strategy === "puts"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              Cash-Secured Puts
             </button>
           </nav>
         </div>
@@ -1656,8 +1681,8 @@ function App() {
                               <>
                                 <td className={`${baseClass} text-gray-900 font-semibold`}>{formatCurrency(Number(put?.strike))}</td>
                                 <td className={baseClass}>{put.days_to_expiry}d</td>
-                                <td className={baseClass}>{formatCurrencyUI(put.bid)}</td>
-                                <td className={baseClass}>{formatCurrencyUI(put.ask)}</td>
+                                <td className={baseClass}>{formatCurrency(put.bid)}</td>
+                                <td className={baseClass}>{formatCurrency(put.ask)}</td>
                                 <td className={baseClass}>{formatNumber(put.open_interest)}</td>
                                 <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
                                 <td className={baseClass}>{formatCurrencyUI(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
@@ -1698,7 +1723,7 @@ function App() {
   );
 }
 
-function SummaryBar({ results, targetIncome, selected }) {
+function SummaryBar({ results, targetIncome, selected, currency = 'USD', rate = 1 }) {
   const safeResults = Array.isArray(results) ? results : [];
   let best = null;
   for (const r of safeResults) {
@@ -1713,21 +1738,41 @@ function SummaryBar({ results, targetIncome, selected }) {
   const rowContracts = Number(useRow?.contracts ?? 0) || 0;
   const pct = target > 0 ? (rowIncome / target) * 100 : null;
 
+  const currCode = currency === 'CAD' ? 'CAD' : 'USD';
+  const toDisplay = (usd) => {
+    const n = Number(usd);
+    if (!Number.isFinite(n)) return 0;
+    return currCode === 'CAD' ? n * Number(rate) : n;
+  };
+  const fmt = (usd, decimals = 2) => {
+    const n = toDisplay(usd);
+    try {
+      return Number(n).toLocaleString('en-US', {
+        style: 'currency',
+        currency: currCode,
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      });
+    } catch {
+      return `${currCode === 'CAD' ? 'CA$' : '$'}${Number(n || 0).toFixed(decimals)}`;
+    }
+  };
+
   return (
     <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded">
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-6 text-sm">
         <div className="inline-flex items-center gap-2 w-full sm:w-full lg:w-auto">
           <span className="text-gray-500">Target Income:</span>{" "}
-          <span className="font-semibold">{formatCurrency(target)}</span>
+          <span className="font-semibold">{fmt(target)}</span>
         </div>
         <div className="flex flex-col w-full lg:flex-row lg:items-center lg:gap-2 lg:w-auto">
           <div className="inline-flex items-center gap-2 w-full sm:w-full lg:w-auto">
             <span className="text-gray-500">{selected ? 'Selected Position Income:' : 'Best Single Position Income:'}</span>
-            <span className="font-semibold">{formatCurrency(rowIncome)}</span>
+            <span className="font-semibold">{fmt(rowIncome)}</span>
           </div>
           {useRow && (
             <span className="text-gray-500 block lg:inline lg:ml-1">
-              (Contracts: {rowContracts.toLocaleString()}, Capital Used: {formatCurrency(rowCapital)})
+              (Contracts: {rowContracts.toLocaleString()}, Capital Used: {fmt(rowCapital)})
             </span>
           )}
         </div>
