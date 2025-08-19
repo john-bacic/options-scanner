@@ -292,7 +292,7 @@ function App() {
   const [isSymbolOpen, setIsSymbolOpen] = useState(true);
   const [isParamsOpen, setIsParamsOpen] = useState(true);
   // Strategy selection
-  const [strategy, setStrategy] = useState("puts"); // "puts" | "calls"
+  const [strategy, setStrategy] = useState("calls"); // "puts" | "calls"
 
   // Helpers moved to module scope
 
