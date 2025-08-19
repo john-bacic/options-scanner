@@ -1344,18 +1344,18 @@ function App() {
               </div>
               <div className="space-y-3 text-sm text-gray-700">
                 <div className="text-xs text-gray-600">
-                  <span className="font-semibold">Columns:</span> STRIKE · EXPIRY · BID · ASK · OI · $/CONTRACT · CONTRACTS · CAPITAL USED · INCOME/CONTRACT · INCOME TOTAL · POP
+                  <span className="font-semibold">Columns:</span> STRIKE · EXPIRY · BID · ASK · OI · DELTA · $/CONTRACT · CONTRACTS · CAPITAL USED · INCOME/CONTRACT · INCOME TOTAL · POP · SCORE
                 </div>
                 <div className="text-xs text-gray-600">
                   <span className="font-semibold">Scan Parameters:</span> Filters and options that shape the results.
                 </div>
                 <div>
-                  <div className="font-semibold">Delta Min (Calls)</div>
-                  <p>Minimum absolute delta for covered calls to include. Range 0–1 (e.g., 0.15). Lower delta = further OTM.</p>
+                  <div className="font-semibold">Delta Min</div>
+                  <p>Minimum absolute delta to include (applies to both strategies). Range 0–1 (e.g., 0.15). Lower delta = further OTM.</p>
                 </div>
                 <div>
-                  <div className="font-semibold">Delta Max (Calls)</div>
-                  <p>Maximum absolute delta for covered calls to include. Range 0–1 (e.g., 0.30).</p>
+                  <div className="font-semibold">Delta Max</div>
+                  <p>Maximum absolute delta to include (applies to both strategies). Range 0–1 (e.g., 0.30).</p>
                 </div>
                 <div>
                   <div className="font-semibold">Use Bid (Conservative)</div>
@@ -1514,11 +1514,9 @@ function App() {
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Open Interest">
                       <span className="hidden md:inline">OI</span><span className="md:hidden">OI</span>
                     </th>
-                    {strategy === "calls" && (
-                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Delta (abs)">
-                        <span className="hidden md:inline">Delta</span><span className="md:hidden">DELTA</span>
-                      </th>
-                    )}
+                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Delta (abs)">
+                      <span className="hidden md:inline">Delta</span><span className="md:hidden">DELTA</span>
+                    </th>
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Dollars Per Contract">
                       <span className="hidden md:inline">$/Contract</span><span className="md:hidden">$/CONTRACT</span>
                     </th>
@@ -1572,9 +1570,7 @@ function App() {
                                 <td className={baseClass}>{formatCurrency(put.bid)}</td>
                                 <td className={baseClass}>{formatCurrency(put.ask)}</td>
                                 <td className={baseClass}>{formatNumber(put.open_interest)}</td>
-                                {strategy === "calls" && (
-                                  <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
-                                )}
+                                <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
                                 <td className={baseClass}>{formatCurrency(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
                                 <td className={baseClass}>{formatNumber(put.contracts ?? 0)}</td>
                                 <td className={baseClass}>{formatCurrency(put.capital_used ?? 0, 0)}</td>
@@ -1588,7 +1584,7 @@ function App() {
                         </tr>
                         {isClosest && (
                           <tr aria-hidden="true">
-                            <td colSpan={strategy === "calls" ? 13 : 12} className="p-0 border-b-2 border-green-600"></td>
+                            <td colSpan={13} className="p-0 border-b-2 border-green-600"></td>
                           </tr>
                         )}
                       </React.Fragment>
