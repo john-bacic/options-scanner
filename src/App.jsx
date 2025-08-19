@@ -162,6 +162,26 @@ const formatInteger = (n) => {
   return String(num);
 };
 
+// Decimal input helpers: allow blanks and in-progress strings like '.', '0.'
+const parseDecimal = (s) => {
+  if (s === null || s === undefined) return "";
+  let str = String(s).replace(/[^0-9.]/g, "");
+  if (str === "") return "";
+  // Keep only the first dot
+  const firstDot = str.indexOf('.');
+  if (firstDot !== -1) {
+    str = str.slice(0, firstDot + 1) + str.slice(firstDot + 1).replace(/\./g, "");
+  }
+  return str;
+};
+const formatDecimal = (n) => {
+  if (n === "" || n === null || n === undefined) return "";
+  if (typeof n === "string") return n;
+  const num = Number(n);
+  if (!Number.isFinite(num)) return "";
+  return String(n);
+};
+
 // Simple error boundary to isolate rendering errors in child components (e.g., SummaryBar)
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -311,8 +331,14 @@ function App() {
   const applyDtePreset = (key) => {
     const p = dtePresets[key];
     if (!p) return;
-    setDteMin(p.min);
-    setDteMax(p.max);
+    // Toggle off if already active -> revert to defaults (1–45)
+    if (Number(dteMin) === p.min && Number(dteMax) === p.max) {
+      setDteMin(1);
+      setDteMax(45);
+    } else {
+      setDteMin(p.min);
+      setDteMax(p.max);
+    }
   };
   const isDtePresetActive = (key) => {
     const p = dtePresets[key];
@@ -442,9 +468,13 @@ function App() {
       if (Number.isFinite(tgtNum) && tgtNum > 0) {
         params.set("target_income", String(tgtNum));
       }
-      // Backend tuning for POP fallbacks
-      params.set("pop_otm_fallback", String(popOtmFallback));
-      params.set("pop_itm_fallback", String(popItmFallback));
+      // Backend tuning for POP fallbacks (only send if numeric)
+      if (Number.isFinite(Number(popOtmFallback))) {
+        params.set("pop_otm_fallback", String(popOtmFallback));
+      }
+      if (Number.isFinite(Number(popItmFallback))) {
+        params.set("pop_itm_fallback", String(popItmFallback));
+      }
       // Covered calls: explicitly request OTM-only by default (backend also defaults true)
       if (strategy === "calls") {
         params.set("otm_only", "true");
@@ -1177,12 +1207,10 @@ function App() {
                   </span>
                 </label>
                 <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="1"
-                  value={deltaMin}
-                  onChange={(e) => setDeltaMin(Number(e.target.value))}
+                  type="text"
+                  inputMode="decimal"
+                  value={formatDecimal(deltaMin)}
+                  onChange={(e) => setDeltaMin(parseDecimal(e.target.value))}
                   className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
                 />
                 <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.15)</div>
@@ -1194,12 +1222,10 @@ function App() {
                   </span>
                 </label>
                 <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="1"
-                  value={deltaMax}
-                  onChange={(e) => setDeltaMax(Number(e.target.value))}
+                  type="text"
+                  inputMode="decimal"
+                  value={formatDecimal(deltaMax)}
+                  onChange={(e) => setDeltaMax(parseDecimal(e.target.value))}
                   className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
                 />
                 <div className="text-[11px] text-gray-500 mt-1">0–1 abs (e.g., 0.30)</div>
@@ -1232,12 +1258,10 @@ function App() {
               </span>
             </label>
             <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="1"
-              value={popOtmFallback}
-              onChange={(e) => setPopOtmFallback(Number(e.target.value))}
+              type="text"
+              inputMode="decimal"
+              value={formatDecimal(popOtmFallback)}
+              onChange={(e) => setPopOtmFallback(parseDecimal(e.target.value))}
               className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
             />
             <div className="text-[11px] text-gray-500 mt-1">0–1 (default 0.70)</div>
@@ -1249,12 +1273,10 @@ function App() {
               </span>
             </label>
             <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="1"
-              value={popItmFallback}
-              onChange={(e) => setPopItmFallback(Number(e.target.value))}
+              type="text"
+              inputMode="decimal"
+              value={formatDecimal(popItmFallback)}
+              onChange={(e) => setPopItmFallback(parseDecimal(e.target.value))}
               className="w-full px-3 py-2.5 lg:px-2 lg:py-2.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-sm"
             />
             <div className="text-[11px] text-gray-500 mt-1">0–1 (default 0.30)</div>
