@@ -282,7 +282,6 @@ function App() {
   const [paramsInfoOpen, setParamsInfoOpen] = useState(false);
   const [resultsInfoOpen, setResultsInfoOpen] = useState(false);
   const [capitalInfoOpen, setCapitalInfoOpen] = useState(false);
-  const [aboutInfoOpen, setAboutInfoOpen] = useState(false);
   // Backend tuning
   const [useBid, setUseBid] = useState(false);
   const [popOtmFallback, setPopOtmFallback] = useState(0.70);
@@ -802,8 +801,33 @@ function App() {
               </div>
             </div>
           )}
+      {/* Currency toggle + FX above title */}
+      <div className="mb-2 flex justify-end">
+        <div className="flex flex-col items-end gap-1">
+          <div className="inline-flex rounded-md border border-gray-300 overflow-hidden">
+            <button
+              type="button"
+              className={`px-2 py-1 text-xs ${currency === 'USD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+              onClick={() => setCurrency('USD')}
+            >
+              USD
+            </button>
+            <button
+              type="button"
+              className={`px-2 py-1 text-xs ${currency === 'CAD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+              onClick={() => setCurrency('CAD')}
+            >
+              CAD
+            </button>
+          </div>
+          <span className="text-xs text-gray-600">1 USD = {fxUsdToCad.toFixed(4)} CAD</span>
+          {fxError ? (
+            <span className="text-xs text-red-600" title={String(fxError)}>FX offline</span>
+          ) : null}
+        </div>
+      </div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl md:text-3xl font-bold text-blue-600">Options Strategy Scanner</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-blue-600">Options Strategy</h1>
       </div>
       
       {/* Strategy Tabs */}
@@ -832,28 +856,6 @@ function App() {
                 Cash-Secured Puts
               </button>
             </nav>
-            <div className="flex flex-col items-end gap-1">
-              <span className="text-xs text-gray-600">1 USD = {fxUsdToCad.toFixed(4)} CAD</span>
-              {fxError ? (
-                <span className="text-xs text-red-600" title={String(fxError)}>FX offline</span>
-              ) : null}
-              <div className="inline-flex rounded-md border border-gray-300 overflow-hidden">
-                <button
-                  type="button"
-                  className={`px-2 py-1 text-xs ${currency === 'USD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
-                  onClick={() => setCurrency('USD')}
-                >
-                  USD
-                </button>
-                <button
-                  type="button"
-                  className={`px-2 py-1 text-xs ${currency === 'CAD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
-                  onClick={() => setCurrency('CAD')}
-                >
-                  CAD
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -883,47 +885,22 @@ function App() {
               {strategy === "calls" ? "Shares & Target Monthly Income" : "Capital & Target Monthly Income"}
             </h2>
           </button>
-          <div className="flex items-center gap-2">
-            {strategy === "puts" && (
-              <button
-                type="button"
-                aria-label="About cash-secured puts"
-                className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
-                onClick={() => {
-                  setIsCapitalOpen(true);
-                  setAboutInfoOpen((prev) => {
-                    const next = !prev;
-                    if (next) setCapitalInfoOpen(false);
-                    return next;
-                  });
-                }}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                  <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
-                </svg>
-              </button>
-            )}
+        {/* Info button moved inside accordion content */}
+        </div>
+        {isCapitalOpen && (
+        <>
+          <div className="mb-2 flex justify-end">
             <button
               type="button"
-              aria-label="Capital & Target info"
+              aria-label={strategy === "calls" ? "Shares & Target info" : "Capital & Target info"}
               className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
-              onClick={() => {
-                setIsCapitalOpen(true);
-                setCapitalInfoOpen((prev) => {
-                  const next = !prev;
-                  if (next) setAboutInfoOpen(false);
-                  return next;
-                });
-              }}
+              onClick={() => setCapitalInfoOpen((prev) => !prev)}
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
                 <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
               </svg>
             </button>
           </div>
-        </div>
-        {isCapitalOpen && (
-        <>
           {capitalInfoOpen && (
             <div className="mb-3 text-sm rounded-md border border-gray-200 bg-gray-50 p-3">
               {strategy === "calls" ? (
@@ -938,7 +915,7 @@ function App() {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div>
                     <div className="font-semibold">Capital ({currCode})</div>
                     <p>Cash available to secure puts. Contracts = floor(Capital ÷ (Strike × 100)). Capital Used and Income Total are based on this sizing.</p>
@@ -947,77 +924,70 @@ function App() {
                     <div className="font-semibold">Target Monthly Income ({currCode})</div>
                     <p>Your monthly income goal. Used to compute the “Progress to Target” metric in the summary; it does not affect ranking/sizing yet.</p>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
-          {aboutInfoOpen && strategy === "puts" && (
-            <div className="mb-3 text-sm rounded-md border border-gray-200 bg-gray-50 p-3">
-              <h3 className="text-base font-semibold mb-2">How Cash-Secured Puts Work</h3>
-              <div className="space-y-3 text-gray-700">
-                <p>
-                  A cash-secured put is an options strategy where you sell (write) a put option and set aside enough cash to buy the underlying shares if assigned.
-                  Each contract controls 100 shares, so the required collateral is typically <span className="font-semibold">Strike × 100</span> (brokers may round or add fees).
-                </p>
-                <div>
-                  <div className="font-semibold">Objective</div>
-                  <p>Collect premium for agreeing to buy the stock at the strike price by expiration if the market price falls below that strike.</p>
-                </div>
-                <div>
-                  <div className="font-semibold">Outcomes</div>
-                  <ul className="list-disc list-inside space-y-1">
-                    <li><span className="font-medium">Expires OTM (stock above strike):</span> you keep the premium; no shares are purchased.</li>
-                    <li><span className="font-medium">Assigned (stock below strike):</span> you buy 100 shares per contract at the strike; effective cost basis is <span className="font-semibold">strike − premium</span>.</li>
-                  </ul>
-                </div>
-                <div>
-                  <div className="font-semibold">Risks</div>
-                  <p>Downside similar to owning the stock from the strike price; the stock can keep falling after assignment. Premium received provides limited downside buffer.</p>
-                </div>
-                <div>
-                  <div className="font-semibold">Sizing</div>
-                  <p>Contracts are sized by available capital. This app computes Contracts = floor(Capital ÷ (Strike × 100)).</p>
-                </div>
-                <div>
-                  <div className="font-semibold">Probability of Profit (POP)</div>
-                  <p>Estimated probability of finishing profitable at expiration. Use alongside other metrics (liquidity, spreads, DTE, and your thesis).</p>
-                </div>
-                <div>
-                  <div className="font-semibold mb-1">Illustration (Payoff at Expiration)</div>
-                  <div className="rounded-md border border-gray-200 p-3 bg-gray-50">
-                    <svg viewBox="0 0 520 260" className="w-full h-auto">
-                      {/* Axes */}
-                      <line x1="40" y1="220" x2="500" y2="220" stroke="#6b7280" strokeWidth="1" />
-                      <line x1="40" y1="20" x2="40" y2="220" stroke="#6b7280" strokeWidth="1" />
-                      {/* Labels */}
-                      <text x="505" y="225" fontSize="12" fill="#374151">Stock Price →</text>
-                      <text x="10" y="20" fontSize="12" fill="#374151" transform="rotate(-90 10,20)">Profit/Loss →</text>
-                      {/* Reference zero P/L line */}
-                      <line x1="40" y1="150" x2="500" y2="150" stroke="#d1d5db" strokeDasharray="4 4" />
-                      <text x="45" y="162" fontSize="11" fill="#6b7280">Break-even P/L</text>
-                      {/* Strike marker */}
-                      <line x1="260" y1="20" x2="260" y2="220" stroke="#e5e7eb" />
-                      <text x="250" y="235" fontSize="11" fill="#374151">Strike</text>
-                      {/* Premium level text */}
-                      <text x="420" y="130" fontSize="11" fill="#059669">= Premium kept</text>
-                      {/* Payoff curve */}
-                      <polyline
-                        fill="none"
-                        stroke="#10b981"
-                        strokeWidth="2.5"
-                        points="40,110 260,110 500,220"
-                      />
-                      {/* Annotations */}
-                      <circle cx="260" cy="110" r="3" fill="#10b981" />
-                      <text x="70" y="100" fontSize="11" fill="#065f46">Stock ≥ Strike → keep full premium</text>
-                      <text x="265" y="195" fontSize="11" fill="#7f1d1d">Stock &lt; Strike → potential assignment; losses beyond break-even</text>
-                    </svg>
-                    <div className="mt-2 text-xs text-gray-600">
-                      Example payoff of a short put at expiration. Above the strike, the option expires worthless and the premium is kept. Below the strike, you may be assigned and your P/L decreases as price falls (capped by owning shares at strike; premium reduces the loss by the amount collected).
+                  <div className="h-px bg-gray-200 my-2" />
+                  <h3 className="text-base font-semibold">How Cash-Secured Puts Work</h3>
+                  <div className="space-y-3 text-gray-700">
+                    <p>
+                      A cash-secured put is an options strategy where you sell (write) a put option and set aside enough cash to buy the underlying shares if assigned.
+                      Each contract controls 100 shares, so the required collateral is typically <span className="font-semibold">Strike × 100</span> (brokers may round or add fees).
+                    </p>
+                    <div>
+                      <div className="font-semibold">Objective</div>
+                      <p>Collect premium for agreeing to buy the stock at the strike price by expiration if the market price falls below that strike.</p>
+                    </div>
+                    <div>
+                      <div className="font-semibold">Outcomes</div>
+                      <ul className="list-disc list-inside space-y-1">
+                        <li><span className="font-medium">Expires OTM (stock above strike):</span> you keep the premium; no shares are purchased.</li>
+                        <li><span className="font-medium">Assigned (stock below strike):</span> you buy 100 shares per contract at the strike; effective cost basis is <span className="font-semibold">strike − premium</span>.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <div className="font-semibold">Risks</div>
+                      <p>Downside similar to owning the stock from the strike price; the stock can keep falling after assignment. Premium received provides limited downside buffer.</p>
+                    </div>
+                    <div>
+                      <div className="font-semibold">Sizing</div>
+                      <p>Contracts are sized by available capital. This app computes Contracts = floor(Capital ÷ (Strike × 100)).</p>
+                    </div>
+                    <div>
+                      <div className="font-semibold mb-1">Illustration (Payoff at Expiration)</div>
+                      <div className="rounded-md border border-gray-200 p-3 bg-gray-50">
+                        <svg viewBox="0 0 520 260" className="w-full h-auto">
+                          {/* Axes */}
+                          <line x1="40" y1="220" x2="500" y2="220" stroke="#6b7280" strokeWidth="1" />
+                          <line x1="40" y1="20" x2="40" y2="220" stroke="#6b7280" strokeWidth="1" />
+                          {/* Labels */}
+                          <text x="505" y="225" fontSize="12" fill="#374151">Stock Price →</text>
+                          <text x="10" y="20" fontSize="12" fill="#374151" transform="rotate(-90 10,20)">Profit/Loss →</text>
+                          {/* Reference zero P/L line */}
+                          <line x1="40" y1="150" x2="500" y2="150" stroke="#d1d5db" strokeDasharray="4 4" />
+                          <text x="45" y="162" fontSize="11" fill="#6b7280">Break-even P/L</text>
+                          {/* Strike marker */}
+                          <line x1="260" y1="20" x2="260" y2="220" stroke="#e5e7eb" />
+                          <text x="250" y="235" fontSize="11" fill="#374151">Strike</text>
+                          {/* Premium level text */}
+                          <text x="420" y="130" fontSize="11" fill="#059669">= Premium kept</text>
+                          {/* Payoff curve */}
+                          <polyline
+                            fill="none"
+                            stroke="#10b981"
+                            strokeWidth="2.5"
+                            points="40,110 260,110 500,220"
+                          />
+                          {/* Annotations */}
+                          <circle cx="260" cy="110" r="3" fill="#10b981" />
+                          <text x="70" y="100" fontSize="11" fill="#065f46">Stock ≥ Strike → keep full premium</text>
+                          <text x="265" y="195" fontSize="11" fill="#7f1d1d">Stock &lt; Strike → potential assignment; losses beyond break-even</text>
+                        </svg>
+                        <div className="mt-2 text-xs text-gray-600">
+                          Example payoff of a short put at expiration. Above the strike, the option expires worthless and the premium is kept. Below the strike, you may be assigned and your P/L decreases as price falls (capped by owning shares at strike; premium reduces the loss by the amount collected).
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
           <div id="capital-section" className={"grid grid-cols-1 " + (strategy === "calls" ? "md:grid-cols-3 " : "md:grid-cols-2 ") + "gap-4 items-end"}>
