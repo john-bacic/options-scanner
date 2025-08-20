@@ -296,6 +296,49 @@ function App() {
   // Strategy selection
   const [strategy, setStrategy] = useState("calls"); // "puts" | "calls"
 
+  // Table column visibility (persisted across sessions and tabs)
+  const DEFAULT_VISIBLE_COLS = {
+    strike: true,
+    expiry: true,
+    bid: true,
+    ask: true,
+    last: true,
+    oi: true,
+    delta: true,
+    perContract: true,
+    contracts: true,
+    capitalUsed: true,
+    incomePerContract: true,
+    incomeTotal: true,
+    pop: true,
+    score: true,
+  };
+  const [visibleCols, setVisibleCols] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_VISIBLE_COLS;
+    try {
+      const raw = localStorage.getItem('options.visibleCols');
+      if (!raw) return DEFAULT_VISIBLE_COLS;
+      const parsed = JSON.parse(raw);
+      return { ...DEFAULT_VISIBLE_COLS, ...parsed };
+    } catch {
+      return DEFAULT_VISIBLE_COLS;
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('options.visibleCols', JSON.stringify(visibleCols)); } catch {}
+  }, [visibleCols]);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const toggleColumn = (key) => {
+    try {
+      const count = Object.values(visibleCols).filter(Boolean).length;
+      const next = !visibleCols[key];
+      if (count === 1 && !next) return; // keep at least one column visible
+      setVisibleCols({ ...visibleCols, [key]: next });
+    } catch {
+      setVisibleCols((prev) => ({ ...prev, [key]: !prev?.[key] }));
+    }
+  };
+
   // Helpers moved to module scope
 
   // Currency and FX
@@ -772,7 +815,7 @@ function App() {
   }, [displayResults.length, selectedIndex]);
 
   return (
-    <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-2 md:px-8 pb-8`}>
+    <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-2 md:px-8 pb-8 overflow-x-hidden`}>
           {price != null && (
             <div className="fixed top-0 left-0 right-0 z-40 bg-gray-900 border-b border-gray-800 shadow-sm">
               <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
@@ -790,13 +833,15 @@ function App() {
                         <span className="ml-1 text-xs text-gray-300">({chartRangeKey})</span>
                       </>
                     ) : null}
+                  </div>
+                  <div className="mt-0.5 flex items-center justify-between">
+                    <div className="text-gray-300">{companyName || ''}</div>
                     {priceSource === 'last_close' ? (
-                      <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded border border-amber-300 bg-amber-100 text-amber-900">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded border border-amber-300 bg-amber-100 text-amber-900">
                         Last close
                       </span>
                     ) : null}
                   </div>
-                  {companyName ? <div className="text-gray-300">{companyName}</div> : null}
                 </div>
               </div>
             </div>
@@ -1635,6 +1680,71 @@ function App() {
               </svg>
               <span className="sr-only">Refresh</span>
             </button>
+            <div className="relative inline-block ml-1">
+              <button
+                type="button"
+                onClick={() => setColumnsOpen((v) => !v)}
+                className="inline-flex items-center px-2 py-1 rounded border text-xs bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                title="Choose visible columns"
+                aria-haspopup="true"
+                aria-expanded={columnsOpen}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                  <path fillRule="evenodd" d="M11.49 3.17a.75.75 0 011.06 0l4.28 4.28a.75.75 0 010 1.06l-8.5 8.5a2.121 2.121 0 01-3 0l-4.28-4.28a.75.75 0 010-1.06l8.5-8.5zM4.21 14.79l2.47 2.47a.621.621 0 00.88 0l.94-.94-3.35-3.35-.94.94a.621.621 0 000 .88z" clipRule="evenodd" />
+                </svg>
+                <span className="ml-1 hidden md:inline">Columns</span>
+                <span className="sr-only">Columns</span>
+              </button>
+              {columnsOpen && (
+                <div className="absolute right-0 mt-2 z-50 w-72 bg-white border border-gray-200 rounded-md shadow-lg p-3">
+                  <div className="text-xs font-semibold text-gray-600 mb-2">Visible Columns</div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                    {[
+                      ['strike','Strike'],
+                      ['expiry','Expiry'],
+                      ['bid','Bid'],
+                      ['ask','Ask'],
+                      ['last','Last'],
+                      ['oi','Open Interest'],
+                      ['delta','Delta'],
+                      ['perContract','$/Contract'],
+                      ['contracts','Contracts'],
+                      ['capitalUsed', strategy === 'calls' ? 'Share Value' : 'Capital Used'],
+                      ['incomePerContract','Income/Contract'],
+                      ['incomeTotal','Income Total'],
+                      ['pop','POP'],
+                      ['score','Score'],
+                    ].map(([key,label]) => (
+                      <label key={key} className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={!!visibleCols[key]}
+                          onChange={() => toggleColumn(key)}
+                        />
+                        <span className="text-gray-700 text-xs md:text-sm">{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      onClick={() => setVisibleCols(DEFAULT_VISIBLE_COLS)}
+                    >
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                      onClick={() => setColumnsOpen(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {/* Summary */}
@@ -1658,48 +1768,76 @@ function App() {
               <table className="min-w-full table-auto border-collapse">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Strike">
-                      <span className="hidden md:inline">Strike</span><span className="md:hidden">STRIKE</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Expiry">
-                      <span className="hidden md:inline">Expiry</span><span className="md:hidden">EXPIRY</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Bid">
-                      <span className="hidden md:inline">Bid</span><span className="md:hidden">BID</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Ask">
-                      <span className="hidden md:inline">Ask</span><span className="md:hidden">ASK</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Last">
-                      <span className="hidden md:inline">Last</span><span className="md:hidden">LAST</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Open Interest">
-                      <span className="hidden md:inline">OI</span><span className="md:hidden">OI</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Delta (abs)">
-                      <span className="hidden md:inline">Delta</span><span className="md:hidden">DELTA</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Dollars Per Contract">
-                      <span className="hidden md:inline">$/Contract</span><span className="md:hidden">$/CONTRACT</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Contracts">
-                      <span className="hidden md:inline">Contracts</span><span className="md:hidden">CONTRACTS</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title={strategy === "calls" ? "Share Value" : "Capital Used"}>
-                      <span className="hidden md:inline">{strategy === "calls" ? "Share Value" : "Capital Used"}</span><span className="md:hidden">{strategy === "calls" ? "SHARE VALUE" : "CAPITAL USED"}</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Per Contract">
-                      <span className="hidden md:inline">Income/Contract</span><span className="md:hidden">INCOME/CONTRACT</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Total">
-                      <span className="hidden md:inline">Income Total</span><span className="md:hidden">INCOME TOTAL</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title={strategy === "calls" ? "Probability of Keeping Premium" : "Probability of Profit"}>
-                      <span className="hidden md:inline">POP</span><span className="md:hidden">POP</span>
-                    </th>
-                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Score">
-                      <span className="hidden md:inline">Score</span><span className="md:hidden">SCORE</span>
-                    </th>
+                    {visibleCols.strike && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Strike">
+                        <span className="hidden md:inline">Strike</span><span className="md:hidden">STRIKE</span>
+                      </th>
+                    )}
+                    {visibleCols.expiry && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Expiry">
+                        <span className="hidden md:inline">Expiry</span><span className="md:hidden">EXPIRY</span>
+                      </th>
+                    )}
+                    {visibleCols.bid && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Bid">
+                        <span className="hidden md:inline">Bid</span><span className="md:hidden">BID</span>
+                      </th>
+                    )}
+                    {visibleCols.ask && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Ask">
+                        <span className="hidden md:inline">Ask</span><span className="md:hidden">ASK</span>
+                      </th>
+                    )}
+                    {visibleCols.last && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Last">
+                        <span className="hidden md:inline">Last</span><span className="md:hidden">LAST</span>
+                      </th>
+                    )}
+                    {visibleCols.oi && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Open Interest">
+                        <span className="hidden md:inline">OI</span><span className="md:hidden">OI</span>
+                      </th>
+                    )}
+                    {visibleCols.delta && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Delta (abs)">
+                        <span className="hidden md:inline">Delta</span><span className="md:hidden">DELTA</span>
+                      </th>
+                    )}
+                    {visibleCols.perContract && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Dollars Per Contract">
+                        <span className="hidden md:inline">$/Contract</span><span className="md:hidden">$/CONTRACT</span>
+                      </th>
+                    )}
+                    {visibleCols.contracts && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Contracts">
+                        <span className="hidden md:inline">Contracts</span><span className="md:hidden">CON</span>
+                      </th>
+                    )}
+                    {visibleCols.capitalUsed && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title={strategy === "calls" ? "Share Value" : "Capital Used"}>
+                        <span className="hidden md:inline">{strategy === "calls" ? "Share Value" : "Capital Used"}</span><span className="md:hidden">{strategy === "calls" ? "SHARE VALUE" : "CAPITAL USED"}</span>
+                      </th>
+                    )}
+                    {visibleCols.incomePerContract && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Per Contract">
+                        <span className="hidden md:inline">Income/Contract</span><span className="md:hidden">INCOME/CONTRACT</span>
+                      </th>
+                    )}
+                    {visibleCols.incomeTotal && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Total">
+                        <span className="hidden md:inline">Income Total</span><span className="md:hidden">INCOME TOTAL</span>
+                      </th>
+                    )}
+                    {visibleCols.pop && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title={strategy === "calls" ? "Probability of Keeping Premium" : "Probability of Profit"}>
+                        <span className="hidden md:inline">POP</span><span className="md:hidden">POP</span>
+                      </th>
+                    )}
+                    {visibleCols.score && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Score">
+                        <span className="hidden md:inline">Score</span><span className="md:hidden">SCORE</span>
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="bg-white">
@@ -1727,27 +1865,55 @@ function App() {
                             const baseClass = selected ? tdBaseSelected : (isAboveSelected ? tdBaseNoBottom : tdBase);
                             return (
                               <>
-                                <td className={`${baseClass} text-gray-900 font-semibold`}>{formatCurrency(Number(put?.strike))}</td>
-                                <td className={baseClass}>{put.days_to_expiry}d</td>
-                                <td className={baseClass}>{formatCurrency(put.bid)}</td>
-                                <td className={baseClass}>{formatCurrency(put.ask)}</td>
-                                <td className={baseClass}>{formatCurrency(put.last)}</td>
-                                <td className={baseClass}>{formatNumber(put.open_interest)}</td>
-                                <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
-                                <td className={baseClass}>{formatCurrencyUI(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
-                                <td className={baseClass}>{formatNumber(put.contracts ?? 0)}</td>
-                                <td className={baseClass}>{formatCurrencyUI(put.capital_used ?? 0, 0)}</td>
-                                <td className={baseClass}>{formatCurrencyUI(put.income_per_contract ?? put.mid)}</td>
-                                <td className={baseClass}>{formatCurrencyUI(put.income_total ?? 0)}</td>
-                                <td className={baseClass}>{put.pop != null ? `${(Number(put.pop) * 100).toFixed(0)}%` : 'N/A'}</td>
-                                <td className={baseClass}>{put.score?.toFixed(2) || 'N/A'}</td>
+                                {visibleCols.strike && (
+                                  <td className={`${baseClass} text-gray-900 font-semibold`}>{formatCurrency(Number(put?.strike))}</td>
+                                )}
+                                {visibleCols.expiry && (
+                                  <td className={baseClass}>{put.days_to_expiry}d</td>
+                                )}
+                                {visibleCols.bid && (
+                                  <td className={baseClass}>{formatCurrency(put.bid)}</td>
+                                )}
+                                {visibleCols.ask && (
+                                  <td className={baseClass}>{formatCurrency(put.ask)}</td>
+                                )}
+                                {visibleCols.last && (
+                                  <td className={baseClass}>{formatCurrency(put.last)}</td>
+                                )}
+                                {visibleCols.oi && (
+                                  <td className={baseClass}>{formatNumber(put.open_interest)}</td>
+                                )}
+                                {visibleCols.delta && (
+                                  <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
+                                )}
+                                {visibleCols.perContract && (
+                                  <td className={baseClass}>{formatCurrencyUI(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
+                                )}
+                                {visibleCols.contracts && (
+                                  <td className={baseClass}>{formatNumber(put.contracts ?? 0)}</td>
+                                )}
+                                {visibleCols.capitalUsed && (
+                                  <td className={baseClass}>{formatCurrencyUI(put.capital_used ?? 0, 0)}</td>
+                                )}
+                                {visibleCols.incomePerContract && (
+                                  <td className={baseClass}>{formatCurrencyUI(put.income_per_contract ?? put.mid)}</td>
+                                )}
+                                {visibleCols.incomeTotal && (
+                                  <td className={`${baseClass} text-gray-900 font-semibold`}>{formatCurrencyUI(put.income_total ?? 0)}</td>
+                                )}
+                                {visibleCols.pop && (
+                                  <td className={baseClass}>{put.pop != null ? `${(Number(put.pop) * 100).toFixed(0)}%` : 'N/A'}</td>
+                                )}
+                                {visibleCols.score && (
+                                  <td className={baseClass}>{put.score?.toFixed(2) || 'N/A'}</td>
+                                )}
                               </>
                             );
                           })()}
                         </tr>
                         {isClosest && (
                           <tr aria-hidden="true">
-                            <td colSpan={14} className="p-0 border-b-2 border-green-600"></td>
+                            <td colSpan={Object.values(visibleCols).filter(Boolean).length} className="p-0 border-b-2 border-green-600"></td>
                           </tr>
                         )}
                       </React.Fragment>
