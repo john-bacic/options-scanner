@@ -264,6 +264,7 @@ function App() {
   const [price, setPrice] = useState(null);
   const [companyName, setCompanyName] = useState(null);
   const [iv, setIv] = useState(null);
+  const [priceSource, setPriceSource] = useState(null); // 'realtime' | 'last_close' | 'fallback'
   const [priceLoading, setPriceLoading] = useState(false);
   const [priceError, setPriceError] = useState(null);
   const priceAnchorRef = useRef(null);
@@ -274,6 +275,7 @@ function App() {
   const [historyError, setHistoryError] = useState(null);
   const [historyPeriod, setHistoryPeriod] = useState("1mo"); // 1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 3y, 5y, max
   const [historyInterval, setHistoryInterval] = useState("1d"); // 1m, 5m, 15m, 30m, 1h, 1d
+  const [fxError, setFxError] = useState(null);
   const [chartRangeKey, setChartRangeKey] = useState("1M"); // UI label for selected timeframe
   const [chartType, setChartType] = useState("line"); // 'line' | 'candle'
   const [paramsInfoOpen, setParamsInfoOpen] = useState(false);
@@ -370,6 +372,24 @@ function App() {
     return cfg && historyPeriod === cfg.period && historyInterval === cfg.interval;
   };
 
+  // Compute change for current chart data (first vs last valid close, or current price if available)
+  const computeRangeChange = (series, endOverride = null) => {
+    if (!Array.isArray(series) || series.length < 2) return null;
+    let i = 0;
+    let j = series.length - 1;
+    while (i < series.length && !Number.isFinite(Number(series[i]?.close))) i++;
+    while (j >= 0 && !Number.isFinite(Number(series[j]?.close))) j--;
+    if (i >= j) return null;
+    const start = Number(series[i].close);
+    const end = Number.isFinite(Number(endOverride)) ? Number(endOverride) : Number(series[j].close);
+    if (!Number.isFinite(start) || start === 0 || !Number.isFinite(end)) return null;
+    const delta = end - start;
+    const pct = (delta / start) * 100;
+    return { delta, pct, start, end };
+  };
+
+  const rangeChange = computeRangeChange(history, price);
+
   // Expiry presets for quick DTE filter (for results table)
   const dtePresets = {
     '0-7d':   { min: 0,  max: 7 },
@@ -401,6 +421,7 @@ function App() {
       if (!symbol) return;
       setPriceLoading(true);
       setPriceError(null);
+      setPriceSource(null);
       try {
         const res = await fetch(apiUrl(`/price?symbol=${encodeURIComponent(symbol)}`));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -409,14 +430,17 @@ function App() {
           setPrice(data.price);
           setCompanyName(data.name || null);
           setIv(typeof data.iv === "number" ? data.iv : null);
+          setPriceSource(data.source || null);
         } else if (data && data.price) {
           setPrice(Number(data.price));
           setCompanyName(data.name || null);
           setIv(typeof data.iv === "number" ? data.iv : null);
+          setPriceSource(data.source || null);
         } else {
           setPrice(null);
           setCompanyName(null);
           setIv(null);
+          setPriceSource(null);
         }
       } catch (e) {
         console.error("Price fetch error", e);
@@ -424,6 +448,7 @@ function App() {
         setPrice(null);
         setCompanyName(null);
         setIv(null);
+        setPriceSource(null);
       } finally {
         setPriceLoading(false);
       }
@@ -663,9 +688,11 @@ function App() {
         // Basic sanity bounds to avoid corrupting state on bad responses
         if (alive && Number.isFinite(rate) && rate > 0 && rate < 10) {
           setFxUsdToCad(rate);
+          setFxError(null);
         }
       } catch (e) {
         console.warn('FX fetch error', e);
+        if (alive) setFxError('FX rate unavailable');
       }
     };
     // Initial fetch on mount / when currency toggles
@@ -749,52 +776,83 @@ function App() {
           {price != null && showStickyPrice && (
             <div className="fixed top-0 left-0 right-0 z-40 bg-gray-900 border-b border-gray-800 shadow-sm">
               <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
-                <span>
-                  Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>
-                  {companyName ? <span className="text-gray-300"> {companyName}</span> : null}: <span className="font-semibold text-white">{formatCurrency(price)}</span>
-                </span>
+                <div>
+                  <div>
+                    Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>: <span className="font-semibold text-white">{formatCurrency(price)}</span>
+                    {rangeChange ? (
+                      <>
+                        <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded border ${rangeChange.delta >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                          {`${rangeChange.delta >= 0 ? '+' : '-'}${Math.abs(rangeChange.pct).toFixed(2)}%`}
+                        </span>
+                        <span className={`ml-1 font-semibold ${rangeChange.delta >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                          {`${rangeChange.delta >= 0 ? '+' : '-'}${formatCurrency(Math.abs(rangeChange.delta))}`}
+                        </span>
+                      </>
+                    ) : null}
+                    {priceSource === 'last_close' ? (
+                      <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded border border-amber-300 bg-amber-100 text-amber-900">
+                        Last close
+                      </span>
+                    ) : null}
+                  </div>
+                  {companyName ? <div className="text-gray-300">{companyName}</div> : null}
+                </div>
               </div>
             </div>
           )}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl md:text-3xl font-bold text-blue-600">Options Strategy Scanner</h1>
-        <button
-          type="button"
-          aria-label="About options strategies"
-          className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
-          onClick={() => setAboutInfoOpen(true)}
-       >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-            <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
-          </svg>
-        </button>
       </div>
       
       {/* Strategy Tabs */}
       <div className="mb-6">
         <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
-            <button
-              onClick={() => setStrategy("calls")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                strategy === "calls"
-                  ? "border-blue-500 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              Covered Calls
-            </button>
-            <button
-              onClick={() => setStrategy("puts")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                strategy === "puts"
-                  ? "border-blue-500 text-blue-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              Cash-Secured Puts
-            </button>
-          </nav>
+          <div className="flex items-end justify-between">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setStrategy("calls")}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  strategy === "calls"
+                    ? "border-blue-500 text-blue-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                }`}
+              >
+                Covered Calls
+              </button>
+              <button
+                onClick={() => setStrategy("puts")}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  strategy === "puts"
+                    ? "border-blue-500 text-blue-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                }`}
+              >
+                Cash-Secured Puts
+              </button>
+            </nav>
+            <div className="flex flex-col items-end gap-1">
+              <span className="text-xs text-gray-600">1 USD = {fxUsdToCad.toFixed(4)} CAD</span>
+              {fxError ? (
+                <span className="text-xs text-red-600" title={String(fxError)}>FX offline</span>
+              ) : null}
+              <div className="inline-flex rounded-md border border-gray-300 overflow-hidden">
+                <button
+                  type="button"
+                  className={`px-2 py-1 text-xs ${currency === 'USD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                  onClick={() => setCurrency('USD')}
+                >
+                  USD
+                </button>
+                <button
+                  type="button"
+                  className={`px-2 py-1 text-xs ${currency === 'CAD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                  onClick={() => setCurrency('CAD')}
+                >
+                  CAD
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       
@@ -824,29 +882,143 @@ function App() {
             </h2>
           </button>
           <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-md border border-gray-300 overflow-hidden">
+            {strategy === "puts" && (
               <button
                 type="button"
-                className={`px-2 py-1 text-xs ${currency === 'USD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
-                onClick={() => setCurrency('USD')}
+                aria-label="About cash-secured puts"
+                className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
+                onClick={() => {
+                  setIsCapitalOpen(true);
+                  setAboutInfoOpen((prev) => {
+                    const next = !prev;
+                    if (next) setCapitalInfoOpen(false);
+                    return next;
+                  });
+                }}
               >
-                USD
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                  <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
+                </svg>
               </button>
-              <button
-                type="button"
-                className={`px-2 py-1 text-xs ${currency === 'CAD' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
-                onClick={() => setCurrency('CAD')}
-              >
-                CAD
-              </button>
-            </div>
-            {currency === 'CAD' && (
-              <span className="text-xs text-gray-600">1 USD = {fxUsdToCad.toFixed(4)} CAD</span>
             )}
+            <button
+              type="button"
+              aria-label="Capital & Target info"
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
+              onClick={() => {
+                setIsCapitalOpen(true);
+                setCapitalInfoOpen((prev) => {
+                  const next = !prev;
+                  if (next) setAboutInfoOpen(false);
+                  return next;
+                });
+              }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
+              </svg>
+            </button>
           </div>
         </div>
         {isCapitalOpen && (
-        <div id="capital-section" className={"grid grid-cols-1 " + (strategy === "calls" ? "md:grid-cols-3 " : "md:grid-cols-2 ") + "gap-4 items-end"}>
+        <>
+          {capitalInfoOpen && (
+            <div className="mb-3 text-sm rounded-md border border-gray-200 bg-gray-50 p-3">
+              {strategy === "calls" ? (
+                <div className="space-y-2">
+                  <div>
+                    <div className="font-semibold">Number of Shares</div>
+                    <p>How many shares you own (or plan to own). Covered calls are sized as 1 contract per 100 shares.</p>
+                  </div>
+                  <div>
+                    <div className="font-semibold">Target Monthly Income ({currCode})</div>
+                    <p>Your monthly income goal. Used to compute the “Progress to Target” metric in the summary; it does not affect ranking/sizing yet.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div>
+                    <div className="font-semibold">Capital ({currCode})</div>
+                    <p>Cash available to secure puts. Contracts = floor(Capital ÷ (Strike × 100)). Capital Used and Income Total are based on this sizing.</p>
+                  </div>
+                  <div>
+                    <div className="font-semibold">Target Monthly Income ({currCode})</div>
+                    <p>Your monthly income goal. Used to compute the “Progress to Target” metric in the summary; it does not affect ranking/sizing yet.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {aboutInfoOpen && strategy === "puts" && (
+            <div className="mb-3 text-sm rounded-md border border-gray-200 bg-gray-50 p-3">
+              <h3 className="text-base font-semibold mb-2">How Cash-Secured Puts Work</h3>
+              <div className="space-y-3 text-gray-700">
+                <p>
+                  A cash-secured put is an options strategy where you sell (write) a put option and set aside enough cash to buy the underlying shares if assigned.
+                  Each contract controls 100 shares, so the required collateral is typically <span className="font-semibold">Strike × 100</span> (brokers may round or add fees).
+                </p>
+                <div>
+                  <div className="font-semibold">Objective</div>
+                  <p>Collect premium for agreeing to buy the stock at the strike price by expiration if the market price falls below that strike.</p>
+                </div>
+                <div>
+                  <div className="font-semibold">Outcomes</div>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li><span className="font-medium">Expires OTM (stock above strike):</span> you keep the premium; no shares are purchased.</li>
+                    <li><span className="font-medium">Assigned (stock below strike):</span> you buy 100 shares per contract at the strike; effective cost basis is <span className="font-semibold">strike − premium</span>.</li>
+                  </ul>
+                </div>
+                <div>
+                  <div className="font-semibold">Risks</div>
+                  <p>Downside similar to owning the stock from the strike price; the stock can keep falling after assignment. Premium received provides limited downside buffer.</p>
+                </div>
+                <div>
+                  <div className="font-semibold">Sizing</div>
+                  <p>Contracts are sized by available capital. This app computes Contracts = floor(Capital ÷ (Strike × 100)).</p>
+                </div>
+                <div>
+                  <div className="font-semibold">Probability of Profit (POP)</div>
+                  <p>Estimated probability of finishing profitable at expiration. Use alongside other metrics (liquidity, spreads, DTE, and your thesis).</p>
+                </div>
+                <div>
+                  <div className="font-semibold mb-1">Illustration (Payoff at Expiration)</div>
+                  <div className="rounded-md border border-gray-200 p-3 bg-gray-50">
+                    <svg viewBox="0 0 520 260" className="w-full h-auto">
+                      {/* Axes */}
+                      <line x1="40" y1="220" x2="500" y2="220" stroke="#6b7280" strokeWidth="1" />
+                      <line x1="40" y1="20" x2="40" y2="220" stroke="#6b7280" strokeWidth="1" />
+                      {/* Labels */}
+                      <text x="505" y="225" fontSize="12" fill="#374151">Stock Price →</text>
+                      <text x="10" y="20" fontSize="12" fill="#374151" transform="rotate(-90 10,20)">Profit/Loss →</text>
+                      {/* Reference zero P/L line */}
+                      <line x1="40" y1="150" x2="500" y2="150" stroke="#d1d5db" strokeDasharray="4 4" />
+                      <text x="45" y="162" fontSize="11" fill="#6b7280">Break-even P/L</text>
+                      {/* Strike marker */}
+                      <line x1="260" y1="20" x2="260" y2="220" stroke="#e5e7eb" />
+                      <text x="250" y="235" fontSize="11" fill="#374151">Strike</text>
+                      {/* Premium level text */}
+                      <text x="420" y="130" fontSize="11" fill="#059669">= Premium kept</text>
+                      {/* Payoff curve */}
+                      <polyline
+                        fill="none"
+                        stroke="#10b981"
+                        strokeWidth="2.5"
+                        points="40,110 260,110 500,220"
+                      />
+                      {/* Annotations */}
+                      <circle cx="260" cy="110" r="3" fill="#10b981" />
+                      <text x="70" y="100" fontSize="11" fill="#065f46">Stock ≥ Strike → keep full premium</text>
+                      <text x="265" y="195" fontSize="11" fill="#7f1d1d">Stock &lt; Strike → potential assignment; losses beyond break-even</text>
+                    </svg>
+                    <div className="mt-2 text-xs text-gray-600">
+                      Example payoff of a short put at expiration. Above the strike, the option expires worthless and the premium is kept. Below the strike, you may be assigned and your P/L decreases as price falls (capped by owning shares at strike; premium reduces the loss by the amount collected).
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <div id="capital-section" className={"grid grid-cols-1 " + (strategy === "calls" ? "md:grid-cols-3 " : "md:grid-cols-2 ") + "gap-4 items-end"}>
           <div className="flex flex-col h-full justify-end">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               <span className="inline-flex items-center gap-2 max-w-full">
@@ -923,19 +1095,8 @@ function App() {
               <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">{currCode}</span>
             </div>
           </div>
-          <div className="flex items-center justify-end mb-2">
-            <button
-              type="button"
-              aria-label="Capital & Target info"
-              className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:text-gray-700 hover:border-gray-400"
-              onClick={() => setCapitalInfoOpen(true)}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm.75 14.5h-1.5v-6h1.5v6zm0-8h-1.5V7h1.5v1.5z" />
-              </svg>
-            </button>
-          </div>
         </div>
+          </>
         )}
         </div>
       </div>
@@ -1025,10 +1186,27 @@ function App() {
             ) : priceError ? (
               <span className="text-red-600">{priceError}</span>
             ) : price != null ? (
-              <span>
-                Current price for <span className="font-semibold">{symbol.toUpperCase()}</span>
-                {companyName ? <span className="text-gray-500"> {companyName}</span> : null}: <span className="font-semibold">{formatCurrency(price)}</span>
-              </span>
+              <div>
+                <div>
+                  Current price for <span className="font-semibold">{symbol.toUpperCase()}</span>: <span className="font-semibold">{formatCurrency(price)}</span>
+                  {rangeChange ? (
+                    <>
+                      <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded border ${rangeChange.delta >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                        {`${rangeChange.delta >= 0 ? '+' : '-'}${Math.abs(rangeChange.pct).toFixed(2)}%`}
+                      </span>
+                      <span className={`ml-1 font-semibold ${rangeChange.delta >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {`${rangeChange.delta >= 0 ? '+' : '-'}${formatCurrency(Math.abs(rangeChange.delta))}`}
+                      </span>
+                    </>
+                  ) : null}
+                  {priceSource === 'last_close' ? (
+                    <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700">
+                      Last close
+                    </span>
+                  ) : null}
+                </div>
+                {companyName ? <div className="text-gray-500">{companyName}</div> : null}
+              </div>
             ) : (
               <span>Enter a symbol to see the current price.</span>
             )}
@@ -1092,139 +1270,7 @@ function App() {
         </div>
         )}
 
-      {capitalInfoOpen && (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setCapitalInfoOpen(false)} />
-          <div className="absolute inset-0 flex items-center justify-center p-4" onClick={() => setCapitalInfoOpen(false)}>
-            <div className="w-full max-w-lg bg-white rounded-lg shadow-xl p-5" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-semibold">Capital & Target — Definitions</h3>
-                <button
-                  type="button"
-                  aria-label="Close"
-                  className="p-2 text-gray-500 hover:text-gray-700"
-                  onClick={() => setCapitalInfoOpen(false)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                    <path d="M6.225 4.811L4.811 6.225 10.586 12l-5.775 5.775 1.414 1.414L12 13.414l5.775 5.775 1.414-1.414L13.414 12l5.775-5.775-1.414-1.414L12 10.586 6.225 4.811z"/>
-                  </svg>
-                </button>
-              </div>
-              <div className="space-y-3 text-sm text-gray-700">
-                <div>
-                  <div className="font-semibold">Capital ({currCode})</div>
-                  <p>Cash available to secure puts. Contracts = floor(Capital ÷ (Strike × 100)). Capital Used and Income Total are based on this sizing.</p>
-                </div>
-                <div>
-                  <div className="font-semibold">Target Monthly Income ({currCode})</div>
-                  <p>Your monthly income goal. Used to compute the “Progress to Target” metric in the summary; it does not affect ranking/sizing yet.</p>
-                </div>
-              </div>
-              <div className="mt-4 text-right">
-                <button className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={() => setCapitalInfoOpen(false)}>Close</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {aboutInfoOpen && (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setAboutInfoOpen(false)} />
-          <div className="absolute inset-0 flex items-center justify-center p-4" onClick={() => setAboutInfoOpen(false)}>
-            <div className="w-full max-w-lg bg-white rounded-lg shadow-xl p-5" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-semibold">How Cash-Secured Puts Work</h3>
-                <button
-                  type="button"
-                  aria-label="Close"
-                  className="p-2 text-gray-500 hover:text-gray-700"
-                  onClick={() => setAboutInfoOpen(false)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                    <path d="M6.225 4.811L4.811 6.225 10.586 12l-5.775 5.775 1.414 1.414L12 13.414l5.775 5.775 1.414-1.414L13.414 12l5.775-5.775-1.414-1.414L12 10.586 6.225 4.811z"/>
-                  </svg>
-                </button>
-              </div>
-              <div className="space-y-3 text-sm text-gray-700">
-                <p>
-                  A cash-secured put is an options strategy where you sell (write) a put option and set aside enough cash to buy the underlying shares if assigned.
-                  Each contract controls 100 shares, so the required collateral is typically <span className="font-semibold">Strike × 100</span> (brokers may round or add fees).
-                </p>
-                <div>
-                  <div className="font-semibold">Objective</div>
-                  <p>Collect premium for agreeing to buy the stock at the strike price by expiration if the market price falls below that strike.</p>
-                </div>
-                <div>
-                  <div className="font-semibold">Outcomes</div>
-                  <ul className="list-disc list-inside space-y-1">
-                    <li><span className="font-medium">Expires OTM (stock above strike):</span> you keep the premium; no shares are purchased.</li>
-                    <li><span className="font-medium">Assigned (stock below strike):</span> you buy 100 shares per contract at the strike; effective cost basis is <span className="font-semibold">strike − premium</span>.</li>
-                  </ul>
-                </div>
-                <div>
-                  <div className="font-semibold">Risks</div>
-                  <p>Downside similar to owning the stock from the strike price; the stock can keep falling after assignment. Premium received provides limited downside buffer.</p>
-                </div>
-                <div>
-                  <div className="font-semibold">Sizing</div>
-                  <p>Contracts are sized by available capital. This app computes Contracts = floor(Capital ÷ (Strike × 100)).</p>
-                </div>
-                <div>
-                  <div className="font-semibold">Probability of Profit (POP)</div>
-                  <p>Estimated probability of finishing profitable at expiration. Use alongside other metrics (liquidity, spreads, DTE, and your thesis).</p>
-                </div>
-
-                {/* Illustration: Cash-Secured Put Payoff at Expiration */}
-                <div>
-                  <div className="font-semibold mb-1">Illustration (Payoff at Expiration)</div>
-                  <div className="rounded-md border border-gray-200 p-3 bg-gray-50">
-                    <svg viewBox="0 0 520 260" className="w-full h-auto">
-                      {/* Axes */}
-                      <line x1="40" y1="220" x2="500" y2="220" stroke="#6b7280" strokeWidth="1" />
-                      <line x1="40" y1="20" x2="40" y2="220" stroke="#6b7280" strokeWidth="1" />
-                      {/* Labels */}
-                      <text x="505" y="225" fontSize="12" fill="#374151">Stock Price →</text>
-                      <text x="10" y="20" fontSize="12" fill="#374151" transform="rotate(-90 10,20)">Profit/Loss →</text>
-                      
-                      {/* Reference zero P/L line */}
-                      <line x1="40" y1="150" x2="500" y2="150" stroke="#d1d5db" strokeDasharray="4 4" />
-                      <text x="45" y="162" fontSize="11" fill="#6b7280">Break-even P/L</text>
-
-                      {/* Strike marker */}
-                      <line x1="260" y1="20" x2="260" y2="220" stroke="#e5e7eb" />
-                      <text x="250" y="235" fontSize="11" fill="#374151">Strike</text>
-
-                      {/* Premium level text */}
-                      <text x="420" y="130" fontSize="11" fill="#059669">= Premium kept</text>
-
-                      {/* Payoff curve: flat at +premium until strike, then slopes down */}
-                      {/* For illustration we set premium = +40px above zero line (y=150-40=110) */}
-                      <polyline
-                        fill="none"
-                        stroke="#10b981"
-                        strokeWidth="2.5"
-                        points="40,110 260,110 500,220"
-                      />
-
-                      {/* Annotations */}
-                      <circle cx="260" cy="110" r="3" fill="#10b981" />
-                      <text x="70" y="100" fontSize="11" fill="#065f46">Stock ≥ Strike → keep full premium</text>
-                      <text x="265" y="195" fontSize="11" fill="#7f1d1d">Stock &lt; Strike → potential assignment; losses beyond break-even</text>
-                    </svg>
-                    <div className="mt-2 text-xs text-gray-600">
-                      Example payoff of a short put at expiration. Above the strike, the option expires worthless and the premium is kept. Below the strike, you may be assigned and your P/L decreases as price falls (capped by owning shares at strike; premium reduces the loss by the amount collected).
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4 text-right">
-                <button className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={() => setAboutInfoOpen(false)}>Close</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Inline info panels are now rendered within the Capital & Target accordion */}
 
       {/* Close Symbol Selection container */}
       </div>

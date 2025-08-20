@@ -409,6 +409,21 @@ class YahooFinanceAdapter:
     def get_current_price(self, symbol: str) -> float:
         """Get current stock price from Yahoo Finance."""
         try:
+            meta = self.get_current_price_with_meta(symbol)
+            price = float(meta.get("price", 0.0))
+            if price > 0 and math.isfinite(price):
+                return price
+            return self._get_fallback_price(symbol)
+        except Exception as e:
+            print(f"Error getting price for {symbol}: {e}")
+            # Fallback to mock price for reliability
+            return self._get_fallback_price(symbol)
+
+    def get_current_price_with_meta(self, symbol: str) -> Dict[str, Any]:
+        """Get current stock price with metadata including source and market state.
+        Returns: { price: float, source: 'realtime' | 'last_close' | 'fallback', market_state: Optional[str] }
+        """
+        try:
             ticker = yf.Ticker(symbol.upper())
             info = ticker.info or {}
 
@@ -422,7 +437,7 @@ class YahooFinanceAdapter:
                     try:
                         val = float(info.get(key) or 0)
                         if val > 0 and math.isfinite(val):
-                            return val
+                            return {"price": val, "source": "last_close", "market_state": market_state}
                     except Exception:
                         pass
                 # Fallback to recent historical close (last valid close in up to 5 days)
@@ -430,7 +445,7 @@ class YahooFinanceAdapter:
                 if not hist.empty:
                     last_close_series = hist['Close'].dropna()
                     if not last_close_series.empty:
-                        return float(last_close_series.iloc[-1])
+                        return {"price": float(last_close_series.iloc[-1]), "source": "last_close", "market_state": market_state}
 
             # Market open or unknown: prefer real-time price, fallback to last close
             current_price = info.get('regularMarketPrice') or info.get('currentPrice') or 0
@@ -440,21 +455,22 @@ class YahooFinanceAdapter:
                 current_price = 0.0
 
             if current_price and current_price > 0 and math.isfinite(current_price):
-                return current_price
+                return {"price": current_price, "source": "realtime", "market_state": market_state or None}
 
             # Fallback to last close via history
             hist = ticker.history(period="5d", interval="1d")
             if not hist.empty:
                 last_close_series = hist['Close'].dropna()
                 if not last_close_series.empty:
-                    return float(last_close_series.iloc[-1])
+                    return {"price": float(last_close_series.iloc[-1]), "source": "last_close", "market_state": market_state or None}
 
-            # As a last resort, raise to trigger adapter fallback
-            raise ValueError(f"Could not get price for {symbol}")
+            # As a last resort, use adapter fallback
+            fb = self._get_fallback_price(symbol)
+            return {"price": fb, "source": "fallback", "market_state": market_state or None}
         except Exception as e:
-            print(f"Error getting price for {symbol}: {e}")
-            # Fallback to mock price for reliability
-            return self._get_fallback_price(symbol)
+            print(f"Error getting price meta for {symbol}: {e}")
+            fb = self._get_fallback_price(symbol)
+            return {"price": fb, "source": "fallback", "market_state": None}
 
     def get_fx_usd_to_cad(self) -> float:
         """Fetch USD->CAD FX rate from Yahoo Finance.
@@ -1174,8 +1190,10 @@ async def health_check():
 async def get_price(symbol: str = Query(..., description="Stock symbol to fetch current price for")):
     """Return current market price and company name for a symbol."""
     try:
-        # Use adapter for robust price with fallbacks
-        price = data_adapter.get_current_price(symbol.upper())
+        # Use adapter for robust price with metadata and fallbacks
+        meta = data_adapter.get_current_price_with_meta(symbol.upper())
+        price = meta.get("price")
+        source = meta.get("source")
         # Best-effort IV estimate
         iv = data_adapter.get_symbol_iv(symbol.upper())
         # Fetch name via yfinance (best-effort)
@@ -1186,7 +1204,7 @@ async def get_price(symbol: str = Query(..., description="Stock symbol to fetch 
             name = info.get("shortName") or info.get("longName") or None
         except Exception:
             name = None
-        return {"symbol": symbol.upper(), "price": price, "name": name, "iv": iv}
+        return {"symbol": symbol.upper(), "price": price, "name": name, "iv": iv, "source": source}
     except Exception as e:
         return {"error": str(e)}
 
