@@ -1111,7 +1111,7 @@ function App() {
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
               <path fillRule="evenodd" d="M3.172 7a7 7 0 111.664 7.606.75.75 0 10-1.07 1.05A8.5 8.5 0 102.25 6.75V5a.75.75 0 00-1.5 0v3A.75.75 0 001.5 8h3a.75.75 0 000-1.5H3.172z" clipRule="evenodd" />
             </svg>
-            <span className="ml-1">Refresh</span>
+            <span className="sr-only">Refresh</span>
           </button>
         </div>
         {isSymbolOpen && (
@@ -1633,7 +1633,7 @@ function App() {
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
                 <path fillRule="evenodd" d="M3.172 7a7 7 0 111.664 7.606.75.75 0 10-1.07 1.05A8.5 8.5 0 102.25 6.75V5a.75.75 0 00-1.5 0v3A.75.75 0 001.5 8h3a.75.75 0 000-1.5H3.172z" clipRule="evenodd" />
               </svg>
-              <span className="ml-1">Refresh</span>
+              <span className="sr-only">Refresh</span>
             </button>
           </div>
         </div>
