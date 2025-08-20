@@ -773,7 +773,7 @@ function App() {
 
   return (
     <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-2 md:px-8 pb-8`}>
-          {price != null && showStickyPrice && (
+          {price != null && (
             <div className="fixed top-0 left-0 right-0 z-40 bg-gray-900 border-b border-gray-800 shadow-sm">
               <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
                 <div>
@@ -1114,6 +1114,7 @@ function App() {
             <span className="sr-only">Refresh</span>
           </button>
         </div>
+        <div ref={priceAnchorRef} className="h-px"></div>
         {isSymbolOpen && (
         <div id="symbol-section" className="mb-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1164,7 +1165,6 @@ function App() {
               />
             </div>
           </div>
-          <div ref={priceAnchorRef} className="h-px"></div>
           <div className="mt-2 text-sm text-gray-600">
             {priceLoading ? (
               <span>Fetching price…</span>
