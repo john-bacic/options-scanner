@@ -273,6 +273,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [historyPeriod, setHistoryPeriod] = useState("1d"); // 1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 3y, 5y, max
   const [historyInterval, setHistoryInterval] = useState("5m"); // 1m, 5m, 15m, 30m, 1h, 1d
   const [fxError, setFxError] = useState(null);
@@ -454,7 +455,7 @@ function App() {
       }
     };
     fetchPrice();
-  }, [symbol]);
+  }, [symbol, refreshTick]);
 
   // Clear selection when results change
   useEffect(() => {
@@ -492,7 +493,7 @@ function App() {
       }
     };
     fetchHistory();
-  }, [symbol, historyPeriod, historyInterval]);
+  }, [symbol, historyPeriod, historyInterval, refreshTick]);
 
   // Show the fixed top price bar only after scrolling past the original price location
   useEffect(() => {
@@ -1128,6 +1129,19 @@ function App() {
                 {symbol?.toUpperCase()}{iv != null ? ` (IV: ${(iv * 100).toFixed(0)}%)` : ''}
               </span>
             </h2>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setRefreshTick((t) => t + 1); handleScan(); }}
+            disabled={loading || priceLoading || historyLoading}
+            className="inline-flex items-center px-2 py-1 rounded border text-xs bg-white text-gray-700 border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Refresh symbol data"
+            aria-label="Refresh symbol data"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M3.172 7a7 7 0 111.664 7.606.75.75 0 10-1.07 1.05A8.5 8.5 0 102.25 6.75V5a.75.75 0 00-1.5 0v3A.75.75 0 001.5 8h3a.75.75 0 000-1.5H3.172z" clipRule="evenodd" />
+            </svg>
+            <span className="ml-1">Refresh</span>
           </button>
         </div>
         {isSymbolOpen && (
