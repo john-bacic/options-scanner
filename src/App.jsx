@@ -212,7 +212,7 @@ class ErrorBoundary extends React.Component {
 }
 
 function App() {
-  const [symbol, setSymbol] = useState("AAPL");
+  const [symbol, setSymbol] = useState("TSLA");
   const [dteMin, setDteMin] = useState(1);
   const [dteMax, setDteMax] = useState(45);
   const [minOI, setMinOI] = useState(100);
@@ -273,10 +273,10 @@ function App() {
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(null);
-  const [historyPeriod, setHistoryPeriod] = useState("1mo"); // 1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 3y, 5y, max
-  const [historyInterval, setHistoryInterval] = useState("1d"); // 1m, 5m, 15m, 30m, 1h, 1d
+  const [historyPeriod, setHistoryPeriod] = useState("1d"); // 1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 3y, 5y, max
+  const [historyInterval, setHistoryInterval] = useState("5m"); // 1m, 5m, 15m, 30m, 1h, 1d
   const [fxError, setFxError] = useState(null);
-  const [chartRangeKey, setChartRangeKey] = useState("1M"); // UI label for selected timeframe
+  const [chartRangeKey, setChartRangeKey] = useState("1D"); // UI label for selected timeframe
   const [chartType, setChartType] = useState("line"); // 'line' | 'candle'
   const [paramsInfoOpen, setParamsInfoOpen] = useState(false);
   const [resultsInfoOpen, setResultsInfoOpen] = useState(false);
@@ -287,7 +287,7 @@ function App() {
   const [popOtmFallback, setPopOtmFallback] = useState(0.70);
   const [popItmFallback, setPopItmFallback] = useState(0.30);
   // Delta filters for covered calls
-  const [deltaMin, setDeltaMin] = useState(0.15);
+  const [deltaMin, setDeltaMin] = useState(0.0);
   const [deltaMax, setDeltaMax] = useState(0.30);
   // Section accordions
   const [isCapitalOpen, setIsCapitalOpen] = useState(true);
@@ -555,7 +555,7 @@ function App() {
         params.set("otm_only", "true");
       }
       // Delta filters (apply to both puts and calls)
-      let dMin = (deltaMin === "" || !Number.isFinite(Number(deltaMin))) ? 0.15 : Number(deltaMin);
+      let dMin = (deltaMin === "" || !Number.isFinite(Number(deltaMin))) ? 0.0 : Number(deltaMin);
       let dMax = (deltaMax === "" || !Number.isFinite(Number(deltaMax))) ? 0.30 : Number(deltaMax);
       dMin = Math.max(0, Math.min(1, dMin));
       dMax = Math.max(0, Math.min(1, dMax));
@@ -781,12 +781,13 @@ function App() {
                     Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>: <span className="font-semibold text-white">{formatCurrency(price)}</span>
                     {rangeChange ? (
                       <>
-                        <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded border ${rangeChange.delta >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                        <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded ${rangeChange.delta >= 0 ? 'bg-green-900 text-green-100' : 'bg-red-900 text-red-100'}`}>
                           {`${rangeChange.delta >= 0 ? '+' : '-'}${Math.abs(rangeChange.pct).toFixed(2)}%`}
                         </span>
                         <span className={`ml-1 font-semibold ${rangeChange.delta >= 0 ? 'text-green-300' : 'text-red-300'}`}>
                           {`${rangeChange.delta >= 0 ? '+' : '-'}${formatCurrency(Math.abs(rangeChange.delta))}`}
                         </span>
+                        <span className="ml-1 text-xs text-gray-300">({chartRangeKey})</span>
                       </>
                     ) : null}
                     {priceSource === 'last_close' ? (
@@ -1191,12 +1192,13 @@ function App() {
                   Current price for <span className="font-semibold">{symbol.toUpperCase()}</span>: <span className="font-semibold">{formatCurrency(price)}</span>
                   {rangeChange ? (
                     <>
-                      <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded border ${rangeChange.delta >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                      <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded ${rangeChange.delta >= 0 ? 'bg-green-200 text-green-700' : 'bg-red-200 text-red-700'}`}>
                         {`${rangeChange.delta >= 0 ? '+' : '-'}${Math.abs(rangeChange.pct).toFixed(2)}%`}
                       </span>
                       <span className={`ml-1 font-semibold ${rangeChange.delta >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {`${rangeChange.delta >= 0 ? '+' : '-'}${formatCurrency(Math.abs(rangeChange.delta))}`}
                       </span>
+                      <span className="ml-1 text-xs text-gray-500">({chartRangeKey})</span>
                     </>
                   ) : null}
                   {priceSource === 'last_close' ? (
@@ -1636,6 +1638,19 @@ function App() {
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={handleScan}
+              disabled={loading}
+              className="ml-2 inline-flex items-center px-2 py-1 rounded border text-xs bg-white text-gray-700 border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Refresh option prices"
+              aria-label="Refresh option prices"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                <path fillRule="evenodd" d="M3.172 7a7 7 0 111.664 7.606.75.75 0 10-1.07 1.05A8.5 8.5 0 102.25 6.75V5a.75.75 0 00-1.5 0v3A.75.75 0 001.5 8h3a.75.75 0 000-1.5H3.172z" clipRule="evenodd" />
+              </svg>
+              <span className="ml-1">Refresh</span>
+            </button>
           </div>
         </div>
         {/* Summary */}
@@ -1670,6 +1685,9 @@ function App() {
                     </th>
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Ask">
                       <span className="hidden md:inline">Ask</span><span className="md:hidden">ASK</span>
+                    </th>
+                    <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Last">
+                      <span className="hidden md:inline">Last</span><span className="md:hidden">LAST</span>
                     </th>
                     <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Open Interest">
                       <span className="hidden md:inline">OI</span><span className="md:hidden">OI</span>
@@ -1729,6 +1747,7 @@ function App() {
                                 <td className={baseClass}>{put.days_to_expiry}d</td>
                                 <td className={baseClass}>{formatCurrency(put.bid)}</td>
                                 <td className={baseClass}>{formatCurrency(put.ask)}</td>
+                                <td className={baseClass}>{formatCurrency(put.last)}</td>
                                 <td className={baseClass}>{formatNumber(put.open_interest)}</td>
                                 <td className={baseClass}>{put?.delta_abs != null ? Number(put.delta_abs).toFixed(2) : 'N/A'}</td>
                                 <td className={baseClass}>{formatCurrencyUI(put.capital_per_contract ?? (put.strike * 100), 0)}</td>
@@ -1744,7 +1763,7 @@ function App() {
                         </tr>
                         {isClosest && (
                           <tr aria-hidden="true">
-                            <td colSpan={13} className="p-0 border-b-2 border-green-600"></td>
+                            <td colSpan={14} className="p-0 border-b-2 border-green-600"></td>
                           </tr>
                         )}
                       </React.Fragment>

@@ -70,6 +70,7 @@ class RankedPut:
     bid: float
     ask: float
     mid: float
+    last: float
     volume: int
     open_interest: int
     days_to_expiry: int
@@ -85,7 +86,7 @@ class ScanRequest(BaseModel):
     symbol: str
     dte_min: int = 30
     dte_max: int = 45
-    delta_min: float = 0.15
+    delta_min: float = 0.0
     delta_max: float = 0.30
     min_oi: int = 500
     max_spread_pct: float = 0.10
@@ -98,6 +99,46 @@ class ScanResponse(BaseModel):
 # Core Logic
 # ============
 
+def effective_premium(quote: "OptionQuote", use_bid: bool) -> float:
+    """Select the effective option premium.
+    Primary: bid if use_bid else mid.
+    Fallback: if primary is missing or <= $0.01, use last; then mid/ask/bid in that order.
+    """
+    # Base selection
+    try:
+        base = (quote.bid if use_bid else quote.mid)
+    except Exception:
+        base = None
+
+    def is_valid(x) -> bool:
+        try:
+            return x is not None and math.isfinite(float(x)) and float(x) > 0.01
+        except Exception:
+            return False
+
+    if is_valid(base):
+        return float(base)
+
+    # Prefer last if valid
+    try:
+        if is_valid(getattr(quote, "last", None)):
+            return float(getattr(quote, "last"))
+    except Exception:
+        pass
+
+    # Other fallbacks
+    candidates = []
+    for attr in ("mid", "ask", "bid"):
+        try:
+            candidates.append(getattr(quote, attr))
+        except Exception:
+            candidates.append(None)
+    for c in candidates:
+        if is_valid(c):
+            return float(c)
+
+    return 0.0
+
 def compute_short_put_metrics(
     quote: OptionQuote,
     current_price: float,
@@ -109,7 +150,7 @@ def compute_short_put_metrics(
     """Compute key metrics for a short put position.
     If use_bid is True, use bid as the premium (conservative). Otherwise use mid.
     """
-    premium = quote.bid if use_bid else quote.mid
+    premium = effective_premium(quote, use_bid)
     strike = quote.strike
     
     # Annualized Return on Capital (assuming 100% cash secured)
@@ -232,6 +273,7 @@ def rank_puts(
             bid=quote.bid,
             ask=quote.ask,
             mid=quote.mid,
+            last=quote.last,
             volume=quote.volume,
             open_interest=quote.open_interest,
             days_to_expiry=days_to_expiry,
@@ -258,7 +300,7 @@ def compute_covered_call_metrics(
     pop_itm_fallback: float = 0.4,
 ) -> Dict[str, float]:
     """Compute key metrics for a covered call position."""
-    premium = quote.bid if use_bid else quote.mid
+    premium = effective_premium(quote, use_bid)
     strike = quote.strike
     
     # For covered calls, we collect premium and potentially get called away
@@ -379,6 +421,7 @@ def rank_covered_calls(
             bid=quote.bid,
             ask=quote.ask,
             mid=quote.mid,
+            last=quote.last,
             volume=quote.volume,
             open_interest=quote.open_interest,
             days_to_expiry=days_to_expiry,
@@ -905,7 +948,7 @@ async def scan_options(
     symbol: str = Query(..., description="Stock symbol to scan"),
     dte_min: int = Query(1, description="Minimum days to expiry"),
     dte_max: int = Query(60, description="Maximum days to expiry"),
-    delta_min: float = Query(0.05, description="Minimum delta"),
+    delta_min: float = Query(0.0, description="Minimum delta"),
     delta_max: float = Query(0.50, description="Maximum delta"),
     min_oi: int = Query(100, description="Minimum open interest"),
     max_spread_pct: float = Query(0.20, description="Maximum spread percentage"),
@@ -943,7 +986,7 @@ async def scan_options(
             # Capital-aware sizing metrics (cash-secured puts)
             # Note: Broker collateral is commonly strike * 100. We keep this conservative.
             capital_per_contract = put.strike * 100.0  # USD per contract
-            premium = (put.bid if use_bid else put.mid)
+            premium = effective_premium(put, use_bid)
             income_per_contract = premium * 100.0      # premium dollars received per contract
             contracts = 0
             capital_used = 0.0
@@ -981,6 +1024,7 @@ async def scan_options(
                 "bid": put.bid,
                 "ask": put.ask,
                 "mid": put.mid,
+                "last": put.last,
                 "volume": put.volume,
                 "open_interest": put.open_interest,
                 "days_to_expiry": put.days_to_expiry,
@@ -1080,7 +1124,7 @@ async def scan_covered_calls(
     symbol: str = Query(..., description="Stock symbol to scan"),
     dte_min: int = Query(1, description="Minimum days to expiry"),
     dte_max: int = Query(60, description="Maximum days to expiry"),
-    delta_min: float = Query(0.05, description="Minimum delta"),
+    delta_min: float = Query(0.0, description="Minimum delta"),
     delta_max: float = Query(0.50, description="Maximum delta"),
     min_oi: int = Query(100, description="Minimum open interest"),
     max_spread_pct: float = Query(0.20, description="Maximum spread percentage"),
@@ -1120,7 +1164,7 @@ async def scan_covered_calls(
             # For covered calls: we own 100 shares per contract
             shares_per_contract = 100
             share_value_per_contract = current_price * shares_per_contract
-            premium = (call.bid if use_bid else call.mid)
+            premium = effective_premium(call, use_bid)
             income_per_contract = premium * 100.0  # premium dollars received per contract
             contracts = 0
             capital_used = 0.0
@@ -1155,6 +1199,7 @@ async def scan_covered_calls(
                 "bid": call.bid,
                 "ask": call.ask,
                 "mid": call.mid,
+                "last": call.last,
                 "volume": call.volume,
                 "open_interest": call.open_interest,
                 "days_to_expiry": call.days_to_expiry,
