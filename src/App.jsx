@@ -290,9 +290,9 @@ function App() {
   const [deltaMin, setDeltaMin] = useState(0.0);
   const [deltaMax, setDeltaMax] = useState(0.30);
   // Section accordions
-  const [isCapitalOpen, setIsCapitalOpen] = useState(true);
-  const [isSymbolOpen, setIsSymbolOpen] = useState(true);
-  const [isParamsOpen, setIsParamsOpen] = useState(true);
+  const [isCapitalOpen, setIsCapitalOpen] = useState(false);
+  const [isSymbolOpen, setIsSymbolOpen] = useState(false);
+  const [isParamsOpen, setIsParamsOpen] = useState(false);
   // Strategy selection
   const [strategy, setStrategy] = useState("calls"); // "puts" | "calls"
 
