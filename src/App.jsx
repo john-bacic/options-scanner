@@ -309,6 +309,7 @@ function App() {
     contracts: true,
     capitalUsed: true,
     incomePerContract: true,
+    incomePerShare: true,
     incomeTotal: true,
     pop: true,
     score: true,
@@ -779,9 +780,56 @@ function App() {
     : results;
 
   // Limit how many results (strikes) are shown in the table
-  const displayResults = strikeLimit === 'all'
+  const MIN_PREMIUM_PER_SHARE = 0.05; // $0.05/share minimum
+  const limitedResults = strikeLimit === 'all'
     ? resultsForDisplay
     : resultsForDisplay.slice(0, Math.max(0, Number(strikeLimit) || 0));
+
+  // Apply minimum premium clamp to Bid/Ask and Income/Contract, and recompute Income Total accordingly
+  const displayResults = Array.isArray(limitedResults)
+    ? limitedResults.map((row) => {
+        const bid = Number(row?.bid);
+        const ask = Number(row?.ask);
+        const mid = Number(row?.mid);
+
+        const bidClamped = Number.isFinite(bid) ? Math.max(bid, MIN_PREMIUM_PER_SHARE) : bid;
+        const askClamped = Number.isFinite(ask) ? Math.max(ask, MIN_PREMIUM_PER_SHARE) : ask;
+
+        // Income per contract may come from backend; ensure per-share floor is respected (i.e., >= $5/contract)
+        let ipc = Number(row?.income_per_contract);
+        if (!Number.isFinite(ipc)) {
+          // Derive from per-share premium if missing; prefer mid unless Use Bid is enabled
+          const perShareBase = useBid
+            ? (Number.isFinite(bid) ? bid : (Number.isFinite(mid) ? mid : NaN))
+            : (Number.isFinite(mid) ? mid : (Number.isFinite(bid) ? bid : NaN));
+          ipc = Number.isFinite(perShareBase) ? perShareBase * 100 : NaN;
+        }
+        const ipcClamped = Number.isFinite(ipc) ? Math.max(ipc, MIN_PREMIUM_PER_SHARE * 100) : 0;
+
+        // Prefer provided contracts; derive from capital_used/capital_per_contract if absent
+        let contractsSafe = Number(row?.contracts);
+        if (!Number.isFinite(contractsSafe)) {
+          const capUsed = Number(row?.capital_used);
+          const cpc = Number(row?.capital_per_contract);
+          contractsSafe = (Number.isFinite(capUsed) && Number.isFinite(cpc) && cpc > 0)
+            ? Math.floor(capUsed / cpc)
+            : 0;
+        } else {
+          contractsSafe = Math.max(0, Math.floor(contractsSafe));
+        }
+
+        const incomeTotal = contractsSafe * ipcClamped;
+
+        return {
+          ...row,
+          bid: bidClamped ?? row?.bid,
+          ask: askClamped ?? row?.ask,
+          income_per_contract: ipcClamped,
+          income_total: incomeTotal,
+          contracts: contractsSafe,
+        };
+      })
+    : [];
 
   // Compute closest-to-spot row within the currently displayed results
   const closestDisplayIndex = (price != null && Array.isArray(displayResults) && displayResults.length > 0)
@@ -816,7 +864,7 @@ function App() {
 
   return (
     <div className={`min-h-screen bg-gray-50 text-gray-900 pt-16 px-2 md:px-8 pb-8 overflow-x-hidden`}>
-          {price != null && (
+      {price != null && (
             <div className="fixed top-0 left-0 right-0 z-40 bg-gray-900 border-b border-gray-800 shadow-sm">
               <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
                 <div>
@@ -837,7 +885,7 @@ function App() {
                   <div className="mt-0.5 flex items-center justify-between">
                     <div className="text-gray-300">{companyName || ''}</div>
                     {priceSource === 'last_close' ? (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded border border-amber-300 bg-amber-100 text-amber-900">
+                      <span className="inline-flex items-center px-1 py-0.5 rounded text-amber-400 bg-gray-800 text-xs border border-gray-700">
                         Last close
                       </span>
                     ) : null}
@@ -906,9 +954,8 @@ function App() {
       </div>
       
       {/* Capital & Target (moved to top row) */}
-      <div className="bg-white rounded-lg shadow mb-6 p-2 md:p-6">
-        <div className="px-3 md:px-0">
-        <div className="flex items-center justify-between mb-3">
+      <div className="bg-white rounded-lg shadow mb-6 p-4 md:p-6">
+        <div className="flex items-center justify-between mb-4">
           <button
             type="button"
             className="flex items-center gap-2 select-none"
@@ -1112,15 +1159,50 @@ function App() {
               <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 text-sm">{currCode}</span>
             </div>
           </div>
+          {/* Target Annual Income percentage vs Value of Shares (calls) or Capital (puts) - Full width row */}
+          <div className="col-span-full mt-2 text-sm">
+            <div className="flex flex-col lg:inline-flex lg:flex-row lg:items-center lg:gap-2">
+              <div className="flex items-center gap-2 mb-1 lg:mb-0">
+                <span className="text-gray-500">
+                  {strategy === "calls" ? "Target Annual Income % of Value of Shares:" : "Target Annual Income % of Capital:"}
+                </span>
+                {(() => {
+                  const denom = strategy === "calls"
+                    ? (price != null && shareCount !== "" && Number.isFinite(Number(shareCount)) ? Number(shareCount) * Number(price) : 0)
+                    : (Number(capital ?? 0) || 0);
+                  const ti = Number(targetIncome ?? 0) || 0;
+                  const annualTarget = ti * 12; // Convert monthly to annual
+                  return denom > 0 && annualTarget > 0
+                    ? <span className="font-semibold">{((annualTarget / denom) * 100).toFixed(2)}%<span className="hidden lg:inline"> —</span></span>
+                    : <span className="text-gray-500">N/A</span>;
+                })()}
+              </div>
+              {(() => {
+                const denom = strategy === "calls"
+                  ? (price != null && shareCount !== "" && Number.isFinite(Number(shareCount)) ? Number(shareCount) * Number(price) : 0)
+                  : (Number(capital ?? 0) || 0);
+                const ti = Number(targetIncome ?? 0) || 0;
+                const annualTarget = ti * 12; // Convert monthly to annual
+                const weeklyTarget = ti / 4.33; // Convert monthly to weekly
+                return denom > 0 && annualTarget > 0
+                  ? (
+                    <div className="text-black font-semibold flex flex-col lg:inline">
+                      <span className="block lg:inline">${formatMoney(toDisplay(annualTarget))} {currCode}/year,</span>
+                      <span className="block lg:inline lg:ml-1">${formatMoney(toDisplay(weeklyTarget))} {currCode}/week</span>
+                    </div>
+                  )
+                  : null;
+              })()}
+            </div>
+          </div>
         </div>
           </>
         )}
-        </div>
       </div>
 
       {/* Symbol Selection */}
-      <div className="bg-white rounded-lg shadow mb-6 p-2 md:p-6">
-        <div className="flex items-center justify-between mb-3">
+      <div className="bg-white rounded-lg shadow mb-6 p-4 md:p-6">
+        <div className="flex items-center justify-between mb-4">
           <button
             type="button"
             className="flex items-center gap-2 select-none"
@@ -1231,7 +1313,7 @@ function App() {
                     </>
                   ) : null}
                   {priceSource === 'last_close' ? (
-                    <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-700">
+                    <span className="ml-2 inline-flex items-center px-1 py-0.5 rounded text-amber-500 bg-amber-50/50 text-xs border border-amber-200/50">
                       Last close
                     </span>
                   ) : null}
@@ -1535,7 +1617,7 @@ function App() {
               </div>
               <div className="space-y-3 text-sm text-gray-700">
                 <div className="text-xs text-gray-600">
-                  <span className="font-semibold">Columns:</span> STRIKE · EXPIRY · BID · ASK · OI · DELTA · $/CONTRACT · CONTRACTS · CAPITAL USED · INCOME/CONTRACT · INCOME TOTAL · POP · SCORE
+                  <span className="font-semibold">Columns:</span> STRIKE · EXPIRY · BID · ASK · OI · DELTA · $/CONTRACT · CONTRACTS · CAPITAL USED · INCOME/CONTRACT · INCOME/SHARE · INCOME TOTAL · POP · SCORE
                 </div>
                 <div className="text-xs text-gray-600">
                   <span className="font-semibold">Scan Parameters:</span> Filters and options that shape the results.
@@ -1711,6 +1793,7 @@ function App() {
                       ['contracts','Contracts'],
                       ['capitalUsed', strategy === 'calls' ? 'Share Value' : 'Capital Used'],
                       ['incomePerContract','Income/Contract'],
+                      ['incomePerShare','Income/Share'],
                       ['incomeTotal','Income Total'],
                       ['pop','POP'],
                       ['score','Score'],
@@ -1823,6 +1906,11 @@ function App() {
                         <span className="hidden md:inline">Income/Contract</span><span className="md:hidden">INCOME/CONTRACT</span>
                       </th>
                     )}
+                    {visibleCols.incomePerShare && (
+                      <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Per Share (monthly)">
+                        <span className="hidden md:inline">Income/Share</span><span className="md:hidden">INCOME/SHARE</span>
+                      </th>
+                    )}
                     {visibleCols.incomeTotal && (
                       <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Total">
                         <span className="hidden md:inline">Income Total</span><span className="md:hidden">INCOME TOTAL</span>
@@ -1849,20 +1937,48 @@ function App() {
                       const priceNum = Number(price);
                       isITM = strategy === "calls" ? (strikeNum < priceNum) : (strikeNum > priceNum);
                     }
+                    
+                    // Find best income position for highlighting
+                    let isBestIncome = false;
+                    if (displayResults.length > 0) {
+                      const bestIncomeRow = displayResults.reduce((best, current) => {
+                        const currentIncome = Number(current?.income_total ?? 0);
+                        const bestIncome = Number(best?.income_total ?? 0);
+                        return currentIncome > bestIncome ? current : best;
+                      });
+                      isBestIncome = put === bestIncomeRow;
+                    }
+                    
                     const tdBase = `px-2 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-500 group-hover:text-blue-700 border-b border-gray-200`;
                     const tdBaseSelected = `px-2 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-500 group-hover:text-blue-700 border-y-2 border-blue-400`;
                     const tdBaseNoBottom = `px-2 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-500 group-hover:text-blue-700`;
+                    
+                    let rowBgClass = 'hover:bg-blue-50';
+                    if (isITM) rowBgClass += ' bg-green-50/60';
+                    if (isBestIncome && selectedIndex !== i) rowBgClass += ' bg-yellow-50';
+                    
                     return (
                       <React.Fragment key={`result-frag-${i}`}>
                         <tr
                           onClick={() => setSelectedIndex(i)}
                           aria-selected={selectedIndex === i}
-                          className={`group cursor-pointer transition-colors duration-150 hover:bg-blue-50 ${isITM ? 'bg-green-50/60' : ''}`}
+                          className={`group cursor-pointer transition-colors duration-150 ${rowBgClass}`}
                         >
                           {(() => {
                             const selected = selectedIndex === i;
                             const isAboveSelected = selectedIndex === i + 1;
                             const baseClass = selected ? tdBaseSelected : (isAboveSelected ? tdBaseNoBottom : tdBase);
+                            // Compute monthlyized income per share using backend yield × per-share basis
+                            const monthlyYield = Number(put?.monthly_yield_pct ?? put?.monthly_income);
+                            const perShareBasis = Number(put?.capital_per_contract) / 100;
+                            let incomeShareMonthly;
+                            if (Number.isFinite(monthlyYield) && Number.isFinite(perShareBasis) && perShareBasis > 0) {
+                              incomeShareMonthly = monthlyYield * perShareBasis;
+                            } else {
+                              const ipc = Number(put?.income_per_contract ?? NaN);
+                              const midShare = Number(put?.mid ?? NaN);
+                              incomeShareMonthly = Number.isFinite(ipc) ? (ipc / 100) : (Number.isFinite(midShare) ? midShare : 0);
+                            }
                             return (
                               <>
                                 {visibleCols.strike && (
@@ -1897,6 +2013,9 @@ function App() {
                                 )}
                                 {visibleCols.incomePerContract && (
                                   <td className={baseClass}>{formatCurrencyUI(put.income_per_contract ?? put.mid)}</td>
+                                )}
+                                {visibleCols.incomePerShare && (
+                                  <td className={baseClass}>{formatCurrencyUI(incomeShareMonthly)}</td>
                                 )}
                                 {visibleCols.incomeTotal && (
                                   <td className={`${baseClass} text-gray-900 font-semibold`}>{formatCurrencyUI(put.income_total ?? 0)}</td>
@@ -1953,6 +2072,21 @@ function SummaryBar({ results, targetIncome, selected, currency = 'USD', rate = 
   const rowContracts = Number(useRow?.contracts ?? 0) || 0;
   const pct = target > 0 ? (rowIncome / target) * 100 : null;
 
+  // Compute monthly Income per Share using backend yield ratio × per-share basis
+  const monthlyYield = Number(useRow?.monthly_yield_pct ?? useRow?.monthly_income);
+  const perShareBasis = Number(useRow?.capital_per_contract) / 100; // strike or spot per share
+  let incomePerShareMonthly = null;
+  if (Number.isFinite(monthlyYield) && Number.isFinite(perShareBasis) && perShareBasis > 0) {
+    incomePerShareMonthly = monthlyYield * perShareBasis;
+  } else {
+    const ipc = Number(useRow?.income_per_contract ?? NaN);
+    const midShare = Number(useRow?.mid ?? NaN);
+    incomePerShareMonthly = Number.isFinite(ipc) ? (ipc / 100) : (Number.isFinite(midShare) ? midShare : null);
+  }
+
+  // Calculate weekly returns (monthly / 4.33 weeks per month)
+  const incomePerShareWeekly = incomePerShareMonthly ? incomePerShareMonthly / 4.33 : null;
+
   const currCode = currency === 'CAD' ? 'CAD' : 'USD';
   const toDisplay = (usd) => {
     const n = Number(usd);
@@ -1991,6 +2125,18 @@ function SummaryBar({ results, targetIncome, selected, currency = 'USD', rate = 
             </span>
           )}
         </div>
+        {useRow && (
+          <div className="inline-flex items-center gap-2 w-full sm:w-full lg:w-auto">
+            <span className="text-gray-500">Income/Share (monthly):</span>{" "}
+            <span className="font-semibold">{fmt(incomePerShareMonthly ?? 0)}</span>
+          </div>
+        )}
+        {useRow && (
+          <div className="inline-flex items-center gap-2 w-full sm:w-full lg:w-auto">
+            <span className="text-gray-500">Income/Share (weekly):</span>{" "}
+            <span className="font-semibold">{fmt(incomePerShareWeekly ?? 0)}</span>
+          </div>
+        )}
         <div className="inline-flex items-center gap-2 w-full sm:w-full lg:w-auto">
           <span className="text-gray-500">Progress to Target:</span>{" "}
           {pct !== null ? (
