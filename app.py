@@ -611,8 +611,11 @@ class YahooFinanceAdapter:
         except Exception:
             return None
     
-    def get_put_options(self, symbol: str) -> List[OptionQuote]:
-        """Get real put options from Yahoo Finance."""
+    def get_put_options(self, symbol: str, min_dte: Optional[int] = None, max_dte: Optional[int] = None) -> List[OptionQuote]:
+        """Get real put options from Yahoo Finance.
+        If a DTE window is provided, include expirations whose days-to-expiry fall within [min_dte, max_dte].
+        If no bounds are provided, keep a lightweight fetch of the next 4 expirations.
+        """
         try:
             ticker = yf.Ticker(symbol.upper())
             options = ticker.options
@@ -621,15 +624,27 @@ class YahooFinanceAdapter:
                 print(f"No options found for {symbol}")
                 return self._get_fallback_options(symbol)
             
-            # Get the next few expiration dates
+            # Select expiration dates
             valid_expiries = []
             current_date = date.today()
             
             for exp_date_str in options:
                 exp_date = datetime.strptime(exp_date_str, '%Y-%m-%d').date()
-                if exp_date > current_date:
+                if exp_date <= current_date:
+                    continue
+                dte = (exp_date - current_date).days
+                # Apply window when provided (inclusive)
+                lower_ok = True if (min_dte is None) else (dte >= min_dte)
+                upper_ok = True if (max_dte is None) else (dte <= max_dte)
+                if lower_ok and upper_ok:
                     valid_expiries.append(exp_date)
-                    if len(valid_expiries) >= 4:  # Limit to 4 expiries
+                elif max_dte is not None and dte > max_dte:
+                    # options are sorted asc; once past the window we can stop early
+                    break
+                elif min_dte is None and max_dte is None:
+                    # legacy lightweight behavior: collect first 4 future expiries
+                    valid_expiries.append(exp_date)
+                    if len(valid_expiries) >= 4:
                         break
             
             if not valid_expiries:
@@ -648,6 +663,7 @@ class YahooFinanceAdapter:
                         continue
                     
                     # Filter puts with reasonable strikes and liquidity
+                    added_for_expiry = 0
                     for _, put in puts.iterrows():
                         strike = put['strike']
                         bid = put['bid']
@@ -701,9 +717,9 @@ class YahooFinanceAdapter:
                             iv=iv
                         )
                         quotes.append(quote)
-                        
-                        # Limit to a higher number of options overall to include wider strikes
-                        if len(quotes) >= 200:
+                        added_for_expiry += 1
+                        # Limit per-expiration to keep fetch efficient but allow multiple expiries
+                        if added_for_expiry >= 150:
                             break
                             
                 except Exception as e:
@@ -759,8 +775,11 @@ class YahooFinanceAdapter:
         
         return quotes
     
-    def get_call_options(self, symbol: str) -> List[OptionQuote]:
-        """Get real call options from Yahoo Finance."""
+    def get_call_options(self, symbol: str, min_dte: Optional[int] = None, max_dte: Optional[int] = None) -> List[OptionQuote]:
+        """Get real call options from Yahoo Finance.
+        If a DTE window is provided, include expirations whose days-to-expiry fall within [min_dte, max_dte].
+        If no bounds are provided, keep a lightweight fetch of the next 4 expirations.
+        """
         try:
             ticker = yf.Ticker(symbol.upper())
             options = ticker.options
@@ -769,15 +788,24 @@ class YahooFinanceAdapter:
                 print(f"No options found for {symbol}")
                 return self._get_fallback_call_options(symbol)
             
-            # Get the next few expiration dates
+            # Select expiration dates
             valid_expiries = []
             current_date = date.today()
             
             for exp_date_str in options:
                 exp_date = datetime.strptime(exp_date_str, '%Y-%m-%d').date()
-                if exp_date > current_date:
+                if exp_date <= current_date:
+                    continue
+                dte = (exp_date - current_date).days
+                lower_ok = True if (min_dte is None) else (dte >= min_dte)
+                upper_ok = True if (max_dte is None) else (dte <= max_dte)
+                if lower_ok and upper_ok:
                     valid_expiries.append(exp_date)
-                    if len(valid_expiries) >= 4:  # Limit to 4 expiries
+                elif max_dte is not None and dte > max_dte:
+                    break
+                elif min_dte is None and max_dte is None:
+                    valid_expiries.append(exp_date)
+                    if len(valid_expiries) >= 4:
                         break
             
             if not valid_expiries:
@@ -796,6 +824,7 @@ class YahooFinanceAdapter:
                         continue
                     
                     # Filter calls with reasonable strikes and liquidity
+                    added_for_expiry = 0
                     for _, call in calls.iterrows():
                         strike = call['strike']
                         bid = call['bid']
@@ -963,7 +992,15 @@ async def scan_options(
     try:
         # Get current price and options
         current_price = data_adapter.get_current_price(symbol.upper())
-        quotes = data_adapter.get_put_options(symbol.upper())
+        # Fetch expirations up to requested horizon so longer DTE presets have data
+        quotes = data_adapter.get_put_options(symbol.upper(), min_dte=dte_min, max_dte=dte_max)
+        # Debug: log fetched expirations/DTE coverage
+        try:
+            expiries = sorted({q.expiration for q in quotes})
+            dtes = sorted({(e - date.today()).days for e in expiries})
+            print(f"/scan {symbol.upper()} dte=[{dte_min},{dte_max}] fetched_options={len(quotes)} expiries={len(expiries)} dtes_sample={dtes[:10]}")
+        except Exception:
+            pass
         
         # Rank the puts
         ranked_puts = rank_puts(
@@ -1140,7 +1177,15 @@ async def scan_covered_calls(
     try:
         # Get current price and call options
         current_price = data_adapter.get_current_price(symbol.upper())
-        call_quotes = data_adapter.get_call_options(symbol.upper())
+        # Fetch expirations up to requested horizon so longer DTE presets have data
+        call_quotes = data_adapter.get_call_options(symbol.upper(), min_dte=dte_min, max_dte=dte_max)
+        # Debug: log fetched expirations/DTE coverage for calls
+        try:
+            expiries = sorted({q.expiration for q in call_quotes})
+            dtes = sorted({(e - date.today()).days for e in expiries})
+            print(f"/scan-calls {symbol.upper()} dte=[{dte_min},{dte_max}] fetched_options={len(call_quotes)} expiries={len(expiries)} dtes_sample={dtes[:10]}")
+        except Exception:
+            pass
         
         # Rank the calls for covered call strategy
         ranked_calls = rank_covered_calls(
