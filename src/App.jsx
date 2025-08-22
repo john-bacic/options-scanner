@@ -1243,7 +1243,7 @@ function App() {
             <div>
               <h3 className="text-lg font-medium mb-2">Tech Stocks</h3>
               <div className="flex flex-wrap gap-2 mb-2">
-                {["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA", "PLTR", "AMD"].map((sym) => (
+                {["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA", "PLTR", "AMD", "BLSH", "FIG"].map((sym) => (
                   <button
                     key={sym}
                     onClick={() => handleSymbolSelect(sym)}
