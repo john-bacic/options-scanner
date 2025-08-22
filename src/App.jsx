@@ -869,7 +869,7 @@ function App() {
               <div className="max-w-7xl mx-auto px-2 md:px-8 py-1 text-sm text-gray-100">
                 <div>
                   <div>
-                    Current price for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>: <span className="font-semibold text-white">{formatCurrency(price)}</span>
+                    <span className={priceSource === 'last_close' ? 'text-red-300' : ''}>{priceSource === 'last_close' ? 'Last close' : 'Current price'}</span> for <span className="font-semibold text-white">{symbol.toUpperCase()}</span>: <span className="font-semibold text-white">{formatCurrency(price)}</span>
                     {rangeChange ? (
                       <>
                         <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded ${rangeChange.delta >= 0 ? 'bg-green-900 text-green-100' : 'bg-red-900 text-red-100'}`}>
@@ -884,11 +884,6 @@ function App() {
                   </div>
                   <div className="mt-0.5 flex items-center justify-between">
                     <div className="text-gray-300">{companyName || ''}</div>
-                    {priceSource === 'last_close' ? (
-                      <span className="inline-flex items-center px-1 py-0.5 rounded text-amber-400 bg-gray-800 text-xs border border-gray-700">
-                        Last close
-                      </span>
-                    ) : null}
                   </div>
                 </div>
               </div>
@@ -1300,7 +1295,7 @@ function App() {
             ) : price != null ? (
               <div>
                 <div>
-                  Current price for <span className="font-semibold">{symbol.toUpperCase()}</span>: <span className="font-semibold">{formatCurrency(price)}</span>
+                  <span className={priceSource === 'last_close' ? 'text-red-600' : ''}>{priceSource === 'last_close' ? 'Last close' : 'Current price'}</span> for <span className="font-semibold">{symbol.toUpperCase()}</span>: <span className="font-semibold">{formatCurrency(price)}</span>
                   {rangeChange ? (
                     <>
                       <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded ${rangeChange.delta >= 0 ? 'bg-green-200 text-green-700' : 'bg-red-200 text-red-700'}`}>
@@ -1311,11 +1306,6 @@ function App() {
                       </span>
                       <span className="ml-1 text-xs text-gray-500">({chartRangeKey})</span>
                     </>
-                  ) : null}
-                  {priceSource === 'last_close' ? (
-                    <span className="ml-2 inline-flex items-center px-1 py-0.5 rounded text-amber-500 bg-amber-50/50 text-xs border border-amber-200/50">
-                      Last close
-                    </span>
                   ) : null}
                 </div>
                 {companyName ? <div className="text-gray-500">{companyName}</div> : null}

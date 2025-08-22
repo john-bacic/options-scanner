@@ -474,9 +474,10 @@ class YahooFinanceAdapter:
             market_state = str(info.get('marketState') or '').upper()
             open_states = {"REGULAR", "TRADING"}
 
-            # If market is closed (POST, PRE, CLOSED, etc.), return the last official close
+            # If market is closed (POST, PRE, CLOSED, etc.), return the current day's close
             if market_state and market_state not in open_states:
-                for key in ("regularMarketPreviousClose", "previousClose"):
+                # First try current day's closing price (regularMarketPrice for post-market)
+                for key in ("regularMarketPrice", "currentPrice"):
                     try:
                         val = float(info.get(key) or 0)
                         if val > 0 and math.isfinite(val):
