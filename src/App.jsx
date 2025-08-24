@@ -805,6 +805,10 @@ function App() {
           ipc = Number.isFinite(perShareBase) ? perShareBase * 100 : NaN;
         }
         const ipcClamped = Number.isFinite(ipc) ? Math.max(ipc, MIN_PREMIUM_PER_SHARE * 100) : 0;
+        
+        const bidWasClamped = Number.isFinite(bid) && bid < MIN_PREMIUM_PER_SHARE;
+        const askWasClamped = Number.isFinite(ask) && ask < MIN_PREMIUM_PER_SHARE;
+        const ipcWasClamped = Number.isFinite(ipc) && ipc < (MIN_PREMIUM_PER_SHARE * 100);
 
         // Prefer provided contracts; derive from capital_used/capital_per_contract if absent
         let contractsSafe = Number(row?.contracts);
@@ -827,6 +831,9 @@ function App() {
           income_per_contract: ipcClamped,
           income_total: incomeTotal,
           contracts: contractsSafe,
+          _bidClamped: bidWasClamped,
+          _askClamped: askWasClamped,
+          _ipcClamped: ipcWasClamped,
         };
       })
     : [];
@@ -1853,12 +1860,16 @@ function App() {
                     )}
                     {visibleCols.bid && (
                       <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Bid">
-                        <span className="hidden md:inline">Bid</span><span className="md:hidden">BID</span>
+                        <div className="flex items-center gap-1">
+                          <span className="hidden md:inline">Bid</span><span className="md:hidden">BID</span>
+                        </div>
                       </th>
                     )}
                     {visibleCols.ask && (
                       <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Ask">
-                        <span className="hidden md:inline">Ask</span><span className="md:hidden">ASK</span>
+                        <div className="flex items-center gap-1">
+                          <span className="hidden md:inline">Ask</span><span className="md:hidden">ASK</span>
+                        </div>
                       </th>
                     )}
                     {visibleCols.last && (
@@ -1893,7 +1904,9 @@ function App() {
                     )}
                     {visibleCols.incomePerContract && (
                       <th className="px-2 py-2 md:px-4 md:py-3 text-left text-[10px] md:text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap" title="Income Per Contract">
-                        <span className="hidden md:inline">Income/Contract</span><span className="md:hidden">INCOME/CONTRACT</span>
+                        <div className="flex items-center gap-1">
+                          <span className="hidden md:inline">Income/Contract</span><span className="md:hidden">INCOME/CONTRACT</span>
+                        </div>
                       </th>
                     )}
                     {visibleCols.incomePerShare && (
@@ -1978,10 +1991,16 @@ function App() {
                                   <td className={baseClass}>{put.days_to_expiry}d</td>
                                 )}
                                 {visibleCols.bid && (
-                                  <td className={baseClass}>{formatCurrency(put.bid)}</td>
+                                  <td className={baseClass}>
+                                    <span>{formatCurrency(put.bid)}</span>
+                                    {put._bidClamped ? <sup className="text-gray-400 ml-0.5">*</sup> : null}
+                                  </td>
                                 )}
                                 {visibleCols.ask && (
-                                  <td className={baseClass}>{formatCurrency(put.ask)}</td>
+                                  <td className={baseClass}>
+                                    <span>{formatCurrency(put.ask)}</span>
+                                    {put._askClamped ? <sup className="text-gray-400 ml-0.5">*</sup> : null}
+                                  </td>
                                 )}
                                 {visibleCols.last && (
                                   <td className={baseClass}>{formatCurrency(put.last)}</td>
@@ -2002,7 +2021,10 @@ function App() {
                                   <td className={baseClass}>{formatCurrencyUI(put.capital_used ?? 0, 0)}</td>
                                 )}
                                 {visibleCols.incomePerContract && (
-                                  <td className={baseClass}>{formatCurrencyUI(put.income_per_contract ?? put.mid)}</td>
+                                  <td className={baseClass}>
+                                    <span>{formatCurrencyUI(put.income_per_contract ?? put.mid)}</span>
+                                    {put._ipcClamped ? <sup className="text-gray-400 ml-0.5">*</sup> : null}
+                                  </td>
                                 )}
                                 {visibleCols.incomePerShare && (
                                   <td className={baseClass}>{formatCurrencyUI(incomeShareMonthly)}</td>
@@ -2096,6 +2118,7 @@ function SummaryBar({ results, targetIncome, selected, currency = 'USD', rate = 
       return `${currCode === 'CAD' ? 'CA$' : '$'}${Number(n || 0).toFixed(decimals)}`;
     }
   };
+  const rowClamped = !!(useRow && (useRow._bidClamped || useRow._askClamped || useRow._ipcClamped));
 
   return (
     <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded">
@@ -2107,7 +2130,15 @@ function SummaryBar({ results, targetIncome, selected, currency = 'USD', rate = 
         <div className="flex flex-col w-full lg:flex-row lg:items-center lg:gap-2 lg:w-auto">
           <div className="inline-flex items-center gap-2 w-full sm:w-full lg:w-auto">
             <span className="text-gray-500">{selected ? 'Selected Position Income:' : 'Best Single Position Income:'}</span>
-            <span className="font-semibold">{fmt(rowIncome)}</span>
+            <InfoTooltip ariaLabel="Premium clamp info">
+              <div>
+                <div className="font-semibold mb-1">Premium floor</div>
+                <div>Minimum $0.05/share applied to Bid and Ask.</div>
+                <div>Income/Contract is floored at $5 and totals are recomputed.</div>
+                <div className="mt-1 text-gray-500">Values with an asterisk were clamped.</div>
+              </div>
+            </InfoTooltip>
+            <span className="font-semibold">{fmt(rowIncome)}{rowClamped ? <sup className="text-gray-400 ml-0.5">*</sup> : null}</span>
           </div>
           {useRow && (
             <span className="text-gray-500 block lg:inline lg:ml-1">
