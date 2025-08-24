@@ -49,6 +49,7 @@ class OptionQuote:
     volume: int
     open_interest: int
     iv: Optional[float] = None  # Implied volatility (annualized, e.g., 0.25)
+    last_trade_time: Optional[datetime] = None  # UTC timestamp of last trade if available
     
     @property
     def mid(self) -> float:
@@ -81,6 +82,7 @@ class RankedPut:
     max_loss: float
     risk_reward: float
     score: float
+    last_trade_time: Optional[datetime] = None
 
 class ScanRequest(BaseModel):
     symbol: str
@@ -283,7 +285,8 @@ def rank_puts(
             monthly_income=metrics["monthly_income"],
             max_loss=metrics["max_loss"],
             risk_reward=metrics["risk_reward"],
-            score=metrics["score"]
+            score=metrics["score"],
+            last_trade_time=quote.last_trade_time,
         )
         ranked.append(ranked_put)
     
@@ -431,7 +434,8 @@ def rank_covered_calls(
             monthly_income=metrics["monthly_income"],
             max_loss=metrics["max_loss"],
             risk_reward=metrics["risk_reward"],
-            score=metrics["score"]
+            score=metrics["score"],
+            last_trade_time=quote.last_trade_time,
         )
         ranked.append(ranked_call)
     
@@ -682,39 +686,66 @@ class YahooFinanceAdapter:
                         if open_interest < 100:
                             continue
                         
-                        # Use lastPrice as primary source (more reliable than bid/ask from Yahoo)
-                        last_price = put.get('lastPrice', 0)
-                        if last_price > 0:
+                        # Extract last trade price and timestamp when available
+                        try:
+                            last_price = float(put.get('lastPrice', 0) or 0)
+                        except Exception:
+                            last_price = 0.0
+                        # Parse lastTradeDate to UTC datetime if available
+                        last_trade_dt: Optional[datetime] = None
+                        try:
+                            ltd = put.get('lastTradeDate', None)
+                            if ltd is not None:
+                                # pandas Timestamp -> datetime
+                                if hasattr(ltd, 'to_pydatetime'):
+                                    dt = ltd.to_pydatetime()
+                                else:
+                                    dt = ltd  # might already be datetime
+                                if isinstance(dt, datetime):
+                                    # Normalize to UTC (assume naive as UTC)
+                                    if dt.tzinfo is None:
+                                        dt = dt.replace(tzinfo=timezone.utc)
+                                    else:
+                                        dt = dt.astimezone(timezone.utc)
+                                    last_trade_dt = dt
+                        except Exception:
+                            last_trade_dt = None
+
+                        # Compute bid/ask and mid without conflating with last
+                        bid_val = float(bid) if bid is not None else 0.0
+                        ask_val = float(ask) if ask is not None else 0.0
+                        if bid_val > 0 and ask_val > 0:
+                            mid = (bid_val + ask_val) / 2
+                        elif last_price > 0:
+                            # Derive a reasonable spread around last when no bid/ask
+                            spread_pct = 0.10
                             mid = last_price
-                            # Estimate bid/ask spread around last price
-                            spread_pct = 0.1  # 10% spread estimate
-                            bid = mid * (1 - spread_pct/2)
-                            ask = mid * (1 + spread_pct/2)
-                        elif bid > 0 and ask > 0:
-                            mid = (bid + ask) / 2
+                            bid_val = mid * (1 - spread_pct/2)
+                            ask_val = mid * (1 + spread_pct/2)
                         else:
                             # Fallback: estimate premium based on strike distance
                             mid = max(0.01, abs(strike - current_price) * 0.1)
-                            bid = mid * 0.9
-                            ask = mid * 1.1
-                        
+                            bid_val = mid * 0.9
+                            ask_val = mid * 1.1
+
                         # Calculate spread percentage
-                        spread_pct = (ask - bid) / mid if mid > 0 else 1.0
-                        
+                        spread_pct = (ask_val - bid_val) / mid if mid > 0 else 1.0
+
                         # Skip if spread is too wide (>50%)
                         if spread_pct > 0.5:
                             continue
-                        
+
                         quote = OptionQuote(
                             symbol=symbol.upper(),
                             expiration=expiration,
                             strike=strike,
-                            bid=bid,
-                            ask=ask,
-                            last=mid,
+                            bid=bid_val,
+                            ask=ask_val,
+                            last=last_price if last_price > 0 else 0.0,
                             volume=volume,
                             open_interest=open_interest,
-                            iv=iv
+                            iv=iv,
+                            last_trade_time=last_trade_dt,
                         )
                         quotes.append(quote)
                         added_for_expiry += 1
@@ -843,39 +874,62 @@ class YahooFinanceAdapter:
                         if open_interest < 100:
                             continue
                         
-                        # Use lastPrice as primary source (more reliable than bid/ask from Yahoo)
-                        last_price = call.get('lastPrice', 0)
-                        if last_price > 0:
+                        # Extract last trade price and timestamp when available
+                        try:
+                            last_price = float(call.get('lastPrice', 0) or 0)
+                        except Exception:
+                            last_price = 0.0
+                        # Parse lastTradeDate to UTC datetime if available
+                        last_trade_dt: Optional[datetime] = None
+                        try:
+                            ltd = call.get('lastTradeDate', None)
+                            if ltd is not None:
+                                if hasattr(ltd, 'to_pydatetime'):
+                                    dt = ltd.to_pydatetime()
+                                else:
+                                    dt = ltd
+                                if isinstance(dt, datetime):
+                                    if dt.tzinfo is None:
+                                        dt = dt.replace(tzinfo=timezone.utc)
+                                    else:
+                                        dt = dt.astimezone(timezone.utc)
+                                    last_trade_dt = dt
+                        except Exception:
+                            last_trade_dt = None
+
+                        # Compute bid/ask and mid without conflating with last
+                        bid_val = float(bid) if bid is not None else 0.0
+                        ask_val = float(ask) if ask is not None else 0.0
+                        if bid_val > 0 and ask_val > 0:
+                            mid = (bid_val + ask_val) / 2
+                        elif last_price > 0:
+                            spread_pct = 0.10
                             mid = last_price
-                            # Estimate bid/ask spread around last price
-                            spread_pct = 0.1  # 10% spread estimate
-                            bid = mid * (1 - spread_pct/2)
-                            ask = mid * (1 + spread_pct/2)
-                        elif bid > 0 and ask > 0:
-                            mid = (bid + ask) / 2
+                            bid_val = mid * (1 - spread_pct/2)
+                            ask_val = mid * (1 + spread_pct/2)
                         else:
-                            # Fallback: estimate premium based on strike distance
                             mid = max(0.01, abs(strike - current_price) * 0.1)
-                            bid = mid * 0.9
-                            ask = mid * 1.1
-                        
+                            bid_val = mid * 0.9
+                            ask_val = mid * 1.1
+
                         # Calculate spread percentage
-                        spread_pct = (ask - bid) / mid if mid > 0 else 1.0
-                        
+                        spread_pct = (ask_val - bid_val) / mid if mid > 0 else 1.0
+
                         # Skip if spread is too wide (>50%)
                         if spread_pct > 0.5:
                             continue
-                        
+
                         quote = OptionQuote(
                             symbol=symbol.upper(),
                             expiration=expiration,
                             strike=strike,
-                            bid=bid,
-                            ask=ask,
-                            last=mid,
+                            bid=bid_val,
+                            ask=ask_val,
+                            last=last_price if last_price > 0 else 0.0,
                             volume=volume,
                             open_interest=open_interest,
-                            iv=iv
+                            iv=iv,
+                            last_trade_time=last_trade_dt,
                         )
                         quotes.append(quote)
                         
@@ -1167,6 +1221,8 @@ async def scan_covered_calls(
     min_oi: int = Query(100, description="Minimum open interest"),
     max_spread_pct: float = Query(0.20, description="Maximum spread percentage"),
     capital: Optional[float] = Query(None, description="Value of shares owned (USD)"),
+    shares: Optional[int] = Query(None, description="Number of shares owned (contracts = floor(shares/100) when provided)"),
+    max_contracts: Optional[int] = Query(None, description="Optional maximum contracts clamp to prevent unrealistic sizes"),
     target_income: Optional[float] = Query(None, description="Target monthly income (USD)"),
     use_bid: bool = Query(False, description="Use bid price (conservative) for premium and metrics"),
     pop_otm_fallback: float = Query(0.70, description="Fallback POP when OTM (if IV unavailable)"),
@@ -1206,21 +1262,48 @@ async def scan_covered_calls(
         
         # Convert to dict format for JSON response
         results = []
-        for call in ranked_calls:
+        for idx, call in enumerate(ranked_calls):
             # For covered calls: we own 100 shares per contract
             shares_per_contract = 100
             share_value_per_contract = current_price * shares_per_contract
             premium = effective_premium(call, use_bid)
             income_per_contract = premium * 100.0  # premium dollars received per contract
+            contracts_unclamped = 0
             contracts = 0
             capital_used = 0.0
             income_total = 0.0
-            
-            if capital is not None and capital > 0:
-                contracts = int(capital // share_value_per_contract)
-                if contracts > 0:
-                    capital_used = contracts * share_value_per_contract
-                    income_total = contracts * income_per_contract
+            shares_used = 0
+            contract_source = "none"
+
+            # Prefer explicit shares input when provided
+            if shares is not None and shares > 0:
+                contracts_unclamped = int(shares // shares_per_contract)
+                contract_source = "shares"
+            elif capital is not None and capital > 0:
+                contracts_unclamped = int(capital // share_value_per_contract)
+                contract_source = "capital"
+
+            was_clamped = False
+            if contracts_unclamped > 0:
+                contracts = contracts_unclamped
+                if max_contracts is not None and max_contracts >= 0 and contracts > max_contracts:
+                    contracts = max_contracts
+                    was_clamped = True
+                capital_used = contracts * share_value_per_contract
+                income_total = contracts * income_per_contract
+                if contract_source == "shares":
+                    shares_used = contracts * shares_per_contract
+
+            warning = None
+            if was_clamped:
+                warning = f"Contracts clamped to {max_contracts} (from {contracts_unclamped})."
+
+            # Brief debug logging for top rows
+            if idx < 5:
+                try:
+                    print(f"/scan-calls debug {symbol.upper()} strike={call.strike} prem={premium:.2f} inc_per={income_per_contract:.2f} contracts={contracts} unclamped={contracts_unclamped} income_total={income_total:.2f} clamped={was_clamped}")
+                except Exception:
+                    pass
 
             # Calculate delta for calls
             delta_abs_val = None
@@ -1259,6 +1342,11 @@ async def scan_covered_calls(
                 "risk_reward": call.risk_reward,
                 "income_per_capital": (income_per_contract / share_value_per_contract) if share_value_per_contract > 0 else 0.0,
                 "contracts": contracts,
+                "contracts_unclamped": contracts_unclamped,
+                "was_clamped": was_clamped,
+                "warning": warning,
+                "contract_source": contract_source,
+                "shares_used": shares_used,
                 "capital_per_contract": share_value_per_contract,
                 "capital_used": capital_used,
                 "income_per_contract": income_per_contract,
