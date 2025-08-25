@@ -270,6 +270,8 @@ function App() {
   const priceAnchorRef = useRef(null);
   const [showStickyPrice, setShowStickyPrice] = useState(false);
   const [autoScanTimer, setAutoScanTimer] = useState(null);
+  // Shares prefill by price disabled; user will set Number of Shares manually
+  const SUGGEST_TARGET_VALUE_CAD = 2000000; // used only for displaying suggested shares, not for auto-fill
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(null);
@@ -500,6 +502,19 @@ function App() {
     fetchPrice();
   }, [symbol, refreshTick]);
 
+  // (disabled) previously auto-prefilled shares based on price and a $2M target
+  // Suggested shares hint (computed only for display; no auto-fill)
+  const suggestedShares = (() => {
+    const px = Number(price);
+    if (!Number.isFinite(px) || px <= 0) return null;
+    const rate = Number(fxUsdToCad);
+    if (!Number.isFinite(rate) || rate <= 0) return null;
+    const targetUsd = Number(SUGGEST_TARGET_VALUE_CAD) / rate; // convert CAD target to USD
+    let shares = Math.floor((targetUsd / px) / 100) * 100; // nearest 100 shares
+    if (!Number.isFinite(shares) || shares <= 0) shares = 100;
+    return shares;
+  })();
+
   // Clear selection when results change
   useEffect(() => {
     setSelectedIndex(null);
@@ -671,13 +686,17 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategy]);
 
-  // When symbol changes, load Number of Shares for that symbol; default to 100 if none saved
+  // When symbol changes, load Number of Shares for that symbol; default to saved per-symbol, legacy global, or 100
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const sym = (typeof symbol === 'string' && symbol) ? symbol.toUpperCase() : null;
       const key = sym ? `options.shareCount.${sym}` : null;
-      const raw = key ? localStorage.getItem(key) : null;
+      let raw = key ? localStorage.getItem(key) : null;
+      if (raw === null || raw === '') {
+        // Back-compat: fallback to legacy global
+        raw = localStorage.getItem('options.shareCount');
+      }
       if (raw === null || raw === '') {
         setShareCount(100);
       } else {
@@ -1121,6 +1140,13 @@ function App() {
                 </>
               )}
             </div>
+            {strategy === "calls" && suggestedShares !== null && (
+              <div className="mt-1 text-xs text-gray-600">
+                <span className="text-gray-500">Suggest:</span>{" "}
+                <span className="font-semibold">{formatNumber(suggestedShares)}</span>{" "}
+                <span className="text-gray-400">(≈CA$2M)</span>
+              </div>
+            )}
           </div>
           {strategy === "calls" && (
             <div className="flex flex-col h-full justify-end">
@@ -1268,7 +1294,7 @@ function App() {
             <div>
               <h3 className="text-lg font-medium mb-2">Indices</h3>
               <div className="flex flex-wrap gap-2 mb-2">
-                {["SPY", "QQQ", "DIA", "IWM", "VTI"].map((sym) => (
+                {["SPY", "SPYI", "QQQ", "DIA", "IWM", "VTI", "QDVO", "QQQI", "OMAH"].map((sym) => (
                   <button
                     key={sym}
                     onClick={() => handleSymbolSelect(sym)}
